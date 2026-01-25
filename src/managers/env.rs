@@ -6,6 +6,7 @@ use crate::services::project_resolver::ProjectResolver;
 use crate::services::secret_ref::SecretRefResolver;
 use crate::services::validation::Validation;
 use crate::utils::feature_flags::is_allow_secret_export_enabled;
+use crate::utils::stdin::{apply_stdin_source, resolve_stdin_source};
 use crate::utils::tool_errors::unknown_action_error;
 use once_cell::sync::Lazy;
 use regex::Regex;
@@ -735,14 +736,19 @@ impl EnvManager {
                 map.insert("cwd".to_string(), Value::String(cwd));
             }
         }
-        if let Some(stdin) = args.get("stdin") {
+        if let Some(source) = resolve_stdin_source(args)? {
             if let Value::Object(map) = &mut exec_args {
-                map.insert("stdin".to_string(), stdin.clone());
+                apply_stdin_source(map, &source);
             }
         }
         if let Some(timeout_ms) = args.get("timeout_ms") {
             if let Value::Object(map) = &mut exec_args {
                 map.insert("timeout_ms".to_string(), timeout_ms.clone());
+            }
+        }
+        if let Some(stdin_eof) = args.get("stdin_eof") {
+            if let Value::Object(map) = &mut exec_args {
+                map.insert("stdin_eof".to_string(), stdin_eof.clone());
             }
         }
         if let Some(pty) = args.get("pty") {

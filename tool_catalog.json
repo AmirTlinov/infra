@@ -1068,6 +1068,18 @@
         "stdin": {
           "type": "string"
         },
+        "stdin_base64": {
+          "type": "string"
+        },
+        "stdin_file": {
+          "type": "string"
+        },
+        "stdin_ref": {
+          "type": "string"
+        },
+        "stdin_eof": {
+          "type": "boolean"
+        },
         "timeout_ms": {
           "type": "integer"
         },
@@ -2475,6 +2487,18 @@
         "stdin": {
           "type": "string"
         },
+        "stdin_base64": {
+          "type": "string"
+        },
+        "stdin_file": {
+          "type": "string"
+        },
+        "stdin_ref": {
+          "type": "string"
+        },
+        "stdin_eof": {
+          "type": "boolean"
+        },
         "timeout_ms": {
           "type": "integer"
         },
@@ -2670,6 +2694,18 @@
         },
         "stdin": {
           "type": "string"
+        },
+        "stdin_base64": {
+          "type": "string"
+        },
+        "stdin_file": {
+          "type": "string"
+        },
+        "stdin_ref": {
+          "type": "string"
+        },
+        "stdin_eof": {
+          "type": "boolean"
         },
         "timeout_ms": {
           "type": "integer"
@@ -3162,6 +3198,18 @@
         },
         "stdin": {
           "type": "string"
+        },
+        "stdin_base64": {
+          "type": "string"
+        },
+        "stdin_file": {
+          "type": "string"
+        },
+        "stdin_ref": {
+          "type": "string"
+        },
+        "stdin_eof": {
+          "type": "boolean"
         },
         "job_id": {
           "type": "string"
@@ -4165,6 +4213,18 @@
         "stdin": {
           "type": "string"
         },
+        "stdin_base64": {
+          "type": "string"
+        },
+        "stdin_file": {
+          "type": "string"
+        },
+        "stdin_ref": {
+          "type": "string"
+        },
+        "stdin_eof": {
+          "type": "boolean"
+        },
         "job_id": {
           "type": "string"
         },
@@ -5067,6 +5127,18 @@
         "stdin": {
           "type": "string"
         },
+        "stdin_base64": {
+          "type": "string"
+        },
+        "stdin_file": {
+          "type": "string"
+        },
+        "stdin_ref": {
+          "type": "string"
+        },
+        "stdin_eof": {
+          "type": "boolean"
+        },
         "timeout_ms": {
           "type": "integer"
         },
@@ -5829,6 +5901,18 @@
         },
         "stdin": {
           "type": "string"
+        },
+        "stdin_base64": {
+          "type": "string"
+        },
+        "stdin_file": {
+          "type": "string"
+        },
+        "stdin_ref": {
+          "type": "string"
+        },
+        "stdin_eof": {
+          "type": "boolean"
         },
         "timeout_ms": {
           "type": "integer"

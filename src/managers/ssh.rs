@@ -13,6 +13,7 @@ use crate::utils::artifacts::{
 use crate::utils::feature_flags::is_allow_secret_export_enabled;
 use crate::utils::fs_atomic::{ensure_dir_for_file, temp_sibling_path};
 use crate::utils::redact::redact_text;
+use crate::utils::stdin::{resolve_stdin_source, StdinSource};
 use crate::utils::tool_errors::unknown_action_error;
 use crate::utils::user_paths::expand_home_path;
 use base64::Engine;
@@ -308,10 +309,11 @@ impl SshManager {
         let resolved = self.resolve_connection(args).await?;
         let env = args.get("env").cloned();
         let pty = args.get("pty").and_then(|v| v.as_bool()).unwrap_or(false);
-        let stdin = args
-            .get("stdin")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
+        let stdin = resolve_stdin_source(args)?;
+        let stdin_eof = args
+            .get("stdin_eof")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
         let trace_id = args
             .get("trace_id")
             .and_then(|v| v.as_str())
@@ -333,6 +335,7 @@ impl SshManager {
                 env,
                 pty,
                 stdin,
+                stdin_eof,
                 Some(timeout_ms),
                 trace_id,
                 span_id,
@@ -375,6 +378,39 @@ impl SshManager {
         let cwd = args.get("cwd").and_then(|v| v.as_str());
         let command = build_command(&self.security, &raw_command, cwd)?;
 
+        let start_timeout_ms = std::cmp::min(
+            read_positive_int(args.get("timeout_ms"))
+                .unwrap_or(resolve_detached_start_timeout_ms()),
+            resolve_tool_call_budget_ms(),
+        );
+        let stdin_source = resolve_stdin_source(args)?;
+        let stdin_path = if let Some(source) = stdin_source.as_ref() {
+            let path = format!("/tmp/infra-stdin-{}.txt", uuid::Uuid::new_v4());
+            let upload_command = format!("cat > {}", escape_shell_value(&path));
+            let mut upload_args = args.clone();
+            if let Value::Object(map) = &mut upload_args {
+                map.insert("command".to_string(), Value::String(upload_command.clone()));
+                map.insert("cwd".to_string(), Value::Null);
+                map.insert("pty".to_string(), Value::Bool(false));
+                map.insert(
+                    "timeout_ms".to_string(),
+                    Value::Number(start_timeout_ms.into()),
+                );
+                map.insert("stdin_eof".to_string(), Value::Bool(true));
+                crate::utils::stdin::apply_stdin_source(map, source);
+            }
+            self.exec_command_once(
+                &upload_args,
+                upload_command.clone(),
+                start_timeout_ms,
+                Some(start_timeout_ms),
+            )
+            .await?;
+            Some(path)
+        } else {
+            None
+        };
+
         let log_path = args
             .get("log_path")
             .and_then(|v| v.as_str())
@@ -398,23 +434,31 @@ impl SshManager {
             .unwrap_or_else(|| format!("{}.exit", log_path));
 
         let job_id = uuid::Uuid::new_v4().to_string();
-        let inner = format!(
-            "({})\nrc=$?\necho \"$rc\" > {}\nexit \"$rc\"",
-            command,
-            escape_shell_value(&exit_path)
-        );
+        let inner_body = if let Some(path) = stdin_path.as_ref() {
+            format!("({}) < {}", command, escape_shell_value(path))
+        } else {
+            format!("({})", command)
+        };
+        let inner = if let Some(path) = stdin_path.as_ref() {
+            format!(
+                "{body}\nrc=$?\nrm -f {stdin}\necho \"$rc\" > {exit}\nexit \"$rc\"",
+                body = inner_body,
+                stdin = escape_shell_value(path),
+                exit = escape_shell_value(&exit_path)
+            )
+        } else {
+            format!(
+                "{body}\nrc=$?\necho \"$rc\" > {exit}\nexit \"$rc\"",
+                body = inner_body,
+                exit = escape_shell_value(&exit_path)
+            )
+        };
         let detached_command = format!(
             "rm -f {pid} {exit} 2>/dev/null || true; nohup sh -lc {inner} > {log} 2>&1 < /dev/null & echo $! > {pid}; cat {pid}",
             pid = escape_shell_value(&pid_path),
             exit = escape_shell_value(&exit_path),
             inner = escape_shell_value(&inner),
             log = escape_shell_value(&log_path)
-        );
-
-        let start_timeout_ms = std::cmp::min(
-            read_positive_int(args.get("timeout_ms"))
-                .unwrap_or(resolve_detached_start_timeout_ms()),
-            resolve_tool_call_budget_ms(),
         );
 
         let exec_args = serde_json::json!({
@@ -426,6 +470,11 @@ impl SshManager {
         let mut merged = args.clone();
         if let Value::Object(map) = &mut merged {
             map.extend(exec_args.as_object().cloned().unwrap_or_default());
+            map.remove("stdin");
+            map.remove("stdin_base64");
+            map.remove("stdin_file");
+            map.remove("stdin_ref");
+            map.remove("stdin_eof");
         }
         let exec = self
             .exec_command_once(
@@ -2215,7 +2264,8 @@ fn exec_blocking(
     command: &str,
     env: Option<Value>,
     pty: bool,
-    stdin: Option<String>,
+    stdin: Option<StdinSource>,
+    stdin_eof: bool,
     timeout_ms: Option<u64>,
     trace_id: Option<String>,
     span_id: Option<String>,
@@ -2244,12 +2294,34 @@ fn exec_blocking(
         }
     }
     channel.exec(command).map_err(map_ssh_error)?;
-    if let Some(stdin) = stdin.as_ref() {
-        let _ = channel.write_all(stdin.as_bytes());
-        let _ = channel.send_eof();
-    }
-
     session.set_blocking(false);
+
+    let mut stdin_bytes: Option<Vec<u8>> = None;
+    let mut stdin_file: Option<std::fs::File> = None;
+    let mut stdin_done = false;
+    match stdin {
+        Some(StdinSource::Bytes(bytes)) => {
+            if bytes.is_empty() {
+                if stdin_eof {
+                    let _ = channel.send_eof();
+                }
+                stdin_done = true;
+            } else {
+                stdin_bytes = Some(bytes);
+            }
+        }
+        Some(StdinSource::File(path)) => {
+            let file = std::fs::File::open(&path).map_err(|err| {
+                ToolError::invalid_params(format!("stdin_file must be readable: {}", err))
+            })?;
+            stdin_file = Some(file);
+        }
+        None => {
+            stdin_done = true;
+        }
+    }
+    let mut stdin_offset = 0usize;
+    let mut stdin_chunk: Vec<u8> = Vec::new();
 
     let max_capture = resolve_exec_max_capture_bytes();
     let max_inline = resolve_exec_max_inline_bytes();
@@ -2279,6 +2351,69 @@ fn exec_blocking(
     loop {
         let mut progressed = false;
         let mut buf = [0u8; 8192];
+        if !stdin_done {
+            if let Some(bytes) = stdin_bytes.as_ref() {
+                match channel.write(&bytes[stdin_offset..]) {
+                    Ok(n) if n > 0 => {
+                        stdin_offset = std::cmp::min(stdin_offset + n, bytes.len());
+                        progressed = true;
+                        if stdin_offset >= bytes.len() {
+                            if stdin_eof {
+                                let _ = channel.send_eof();
+                            }
+                            stdin_done = true;
+                        }
+                    }
+                    Ok(_) => {}
+                    Err(err) => {
+                        let io_err = err;
+                        if io_err.kind() != std::io::ErrorKind::WouldBlock {
+                            stdin_done = true;
+                        }
+                    }
+                }
+            } else if let Some(file) = stdin_file.as_mut() {
+                if stdin_offset >= stdin_chunk.len() {
+                    stdin_chunk.clear();
+                    stdin_offset = 0;
+                    let mut buf = [0u8; 8192];
+                    let n = match file.read(&mut buf) {
+                        Ok(n) => n,
+                        Err(err) => {
+                            return Err(ToolError::internal(format!(
+                                "Failed to read stdin_file: {}",
+                                err
+                            )));
+                        }
+                    };
+                    if n == 0 {
+                        if stdin_eof {
+                            let _ = channel.send_eof();
+                        }
+                        stdin_done = true;
+                    } else {
+                        stdin_chunk.extend_from_slice(&buf[..n]);
+                    }
+                }
+                if !stdin_done {
+                    match channel.write(&stdin_chunk[stdin_offset..]) {
+                        Ok(n) if n > 0 => {
+                            stdin_offset = std::cmp::min(stdin_offset + n, stdin_chunk.len());
+                            progressed = true;
+                        }
+                        Ok(_) => {}
+                        Err(err) => {
+                            let io_err = err;
+                            if io_err.kind() != std::io::ErrorKind::WouldBlock {
+                                stdin_done = true;
+                            }
+                        }
+                    }
+                }
+            } else {
+                stdin_done = true;
+            }
+        }
         match channel.read(&mut buf) {
             Ok(n) if n > 0 => {
                 stdout_state.capture(&buf[..n]);

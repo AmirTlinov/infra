@@ -3,9 +3,10 @@ use crate::utils::user_paths::expand_home_path;
 use futures::future::join_all;
 use serde_json::Value;
 use std::path::PathBuf;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::{copy, AsyncReadExt, AsyncWriteExt};
 
 use super::{random_token, read_positive_int, LocalManager};
+use crate::utils::stdin::{resolve_stdin_source, StdinSource};
 
 const DEFAULT_STDOUT_INLINE_BYTES: usize = 32 * 1024;
 const DEFAULT_STDERR_INLINE_BYTES: usize = 16 * 1024;
@@ -34,10 +35,11 @@ impl LocalManager {
             .get("timeout_ms")
             .and_then(|v| v.as_i64())
             .map(|v| v as u64);
-        let stdin = args
-            .get("stdin")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
+        let stdin = resolve_stdin_source(&args)?;
+        let stdin_eof = args
+            .get("stdin_eof")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
         let inline = args
             .get("inline")
             .and_then(|v| v.as_bool())
@@ -99,11 +101,30 @@ impl LocalManager {
         let mut child = cmd
             .spawn()
             .map_err(|err| ToolError::internal(format!("Failed to spawn command: {}", err)))?;
+        let mut stdin_hold = None;
         if let Some(input) = stdin {
             if let Some(mut writer) = child.stdin.take() {
-                writer.write_all(input.as_bytes()).await.map_err(|err| {
-                    ToolError::internal(format!("Failed to write stdin: {}", err))
-                })?;
+                match input {
+                    StdinSource::Bytes(bytes) => {
+                        writer.write_all(&bytes).await.map_err(|err| {
+                            ToolError::internal(format!("Failed to write stdin: {}", err))
+                        })?;
+                    }
+                    StdinSource::File(path) => {
+                        let mut file = tokio::fs::File::open(&path).await.map_err(|err| {
+                            ToolError::invalid_params(format!(
+                                "stdin_file must be readable: {}",
+                                err
+                            ))
+                        })?;
+                        copy(&mut file, &mut writer).await.map_err(|err| {
+                            ToolError::internal(format!("Failed to stream stdin file: {}", err))
+                        })?;
+                    }
+                }
+                if !stdin_eof {
+                    stdin_hold = Some(writer);
+                }
             }
         }
 
@@ -214,6 +235,7 @@ impl LocalManager {
         };
         let status = status
             .map_err(|err| ToolError::internal(format!("Failed to wait for process: {}", err)))?;
+        drop(stdin_hold);
 
         let (stdout_bytes, stdout_buf, stdout_truncated) =
             stdout_task.await.unwrap_or((0, Vec::new(), false));

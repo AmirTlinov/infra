@@ -1,10 +1,12 @@
 use crate::errors::ToolError;
 use crate::services::logger::Logger;
 use crate::utils::sandbox::resolve_sandbox_path;
+use crate::utils::stdin::{resolve_stdin_source, StdinSource};
 use crate::utils::template::resolve_templates;
 use crate::utils::tool_errors::unknown_action_error;
 use serde_json::Value;
 use std::path::PathBuf;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::process::Command;
 
 const REPO_ACTIONS: &[&str] = &[
@@ -99,32 +101,93 @@ impl RepoManager {
         command: &str,
         args: &[String],
         timeout_ms: Option<u64>,
-    ) -> Result<(i32, Vec<u8>, Vec<u8>), ToolError> {
+        stdin: Option<StdinSource>,
+        stdin_eof: bool,
+    ) -> Result<(i32, Vec<u8>, Vec<u8>, bool), ToolError> {
         let mut cmd = Command::new(command);
         cmd.args(args);
         cmd.current_dir(cwd);
+        if stdin.is_some() {
+            cmd.stdin(std::process::Stdio::piped());
+        } else {
+            cmd.stdin(std::process::Stdio::null());
+        }
         cmd.stdout(std::process::Stdio::piped());
         cmd.stderr(std::process::Stdio::piped());
 
-        let output = if let Some(timeout) = timeout_ms {
-            match tokio::time::timeout(std::time::Duration::from_millis(timeout), cmd.output())
+        let mut child = cmd
+            .spawn()
+            .map_err(|err| ToolError::internal(format!("exec failed: {}", err)))?;
+        let mut stdin_hold = None;
+        if let Some(input) = stdin {
+            if let Some(mut writer) = child.stdin.take() {
+                match input {
+                    StdinSource::Bytes(bytes) => {
+                        if !bytes.is_empty() {
+                            writer.write_all(&bytes).await.map_err(|err| {
+                                ToolError::internal(format!("stdin write failed: {}", err))
+                            })?;
+                        }
+                    }
+                    StdinSource::File(path) => {
+                        let mut file = tokio::fs::File::open(&path).await.map_err(|err| {
+                            ToolError::invalid_params(format!(
+                                "stdin_file must be readable: {}",
+                                err
+                            ))
+                        })?;
+                        tokio::io::copy(&mut file, &mut writer)
+                            .await
+                            .map_err(|err| {
+                                ToolError::internal(format!("stdin file stream failed: {}", err))
+                            })?;
+                    }
+                }
+                if !stdin_eof {
+                    stdin_hold = Some(writer);
+                }
+            }
+        }
+
+        let mut stdout_reader = child.stdout.take();
+        let mut stderr_reader = child.stderr.take();
+        let stdout_task = tokio::spawn(async move {
+            let mut buf = Vec::new();
+            if let Some(mut reader) = stdout_reader.take() {
+                let _ = reader.read_to_end(&mut buf).await;
+            }
+            buf
+        });
+        let stderr_task = tokio::spawn(async move {
+            let mut buf = Vec::new();
+            if let Some(mut reader) = stderr_reader.take() {
+                let _ = reader.read_to_end(&mut buf).await;
+            }
+            buf
+        });
+
+        let mut timed_out = false;
+        let status = if let Some(timeout) = timeout_ms {
+            match tokio::time::timeout(std::time::Duration::from_millis(timeout), child.wait())
                 .await
             {
-                Ok(result) => {
-                    result.map_err(|err| ToolError::internal(format!("exec failed: {}", err)))?
-                }
+                Ok(result) => result,
                 Err(_) => {
-                    return Err(ToolError::timeout("Command timed out"));
+                    timed_out = true;
+                    let _ = child.kill().await;
+                    child.wait().await
                 }
             }
         } else {
-            cmd.output()
-                .await
-                .map_err(|err| ToolError::internal(format!("exec failed: {}", err)))?
-        };
+            child.wait().await
+        }
+        .map_err(|err| ToolError::internal(format!("exec failed: {}", err)))?;
 
-        let code = output.status.code().unwrap_or(-1);
-        Ok((code, output.stdout, output.stderr))
+        drop(stdin_hold);
+        let stdout = stdout_task.await.unwrap_or_default();
+        let stderr = stderr_task.await.unwrap_or_default();
+        let code = status.code().unwrap_or(-1);
+        Ok((code, stdout, stderr, timed_out))
     }
 
     async fn exec(&self, args: Value) -> Result<Value, ToolError> {
@@ -153,8 +216,13 @@ impl RepoManager {
             })
             .unwrap_or_default();
         let timeout_ms = read_positive_int(args.get("timeout_ms"));
-        let (code, stdout, stderr) = self
-            .run_command(&repo_root, command, &argv, timeout_ms)
+        let stdin = resolve_stdin_source(&args)?;
+        let stdin_eof = args
+            .get("stdin_eof")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
+        let (code, stdout, stderr, timed_out) = self
+            .run_command(&repo_root, command, &argv, timeout_ms, stdin, stdin_eof)
             .await?;
         let max_inline = 16 * 1024;
         let stdout_inline =
@@ -164,7 +232,7 @@ impl RepoManager {
         Ok(serde_json::json!({
             "success": code == 0,
             "exit_code": code,
-            "timed_out": false,
+            "timed_out": timed_out,
             "stdout_inline": stdout_inline,
             "stderr_inline": stderr_inline,
             "stdout_bytes": stdout.len(),
@@ -182,8 +250,8 @@ impl RepoManager {
     async fn assert_clean(&self, args: Value) -> Result<Value, ToolError> {
         let repo_root = self.resolve_repo_root(&args)?;
         let argv = ["status".to_string(), "--porcelain".to_string()];
-        let (code, stdout, stderr) = self
-            .run_command(&repo_root, "git", &argv, Some(30_000))
+        let (code, stdout, stderr, _) = self
+            .run_command(&repo_root, "git", &argv, Some(30_000), None, true)
             .await?;
         if code != 0 {
             return Err(
@@ -210,8 +278,8 @@ impl RepoManager {
                 argv.push(entry.to_string());
             }
         }
-        let (code, stdout, stderr) = self
-            .run_command(&repo_root, "git", &argv, Some(30_000))
+        let (code, stdout, stderr, _) = self
+            .run_command(&repo_root, "git", &argv, Some(30_000), None, true)
             .await?;
         if code != 0 {
             return Err(
@@ -257,8 +325,8 @@ impl RepoManager {
             argv.push("--check".to_string());
         }
         argv.push(patch_path.to_string_lossy().to_string());
-        let (code, stdout, stderr) = self
-            .run_command(&repo_root, "git", &argv, Some(30_000))
+        let (code, stdout, stderr, _) = self
+            .run_command(&repo_root, "git", &argv, Some(30_000), None, true)
             .await?;
         let _ = tokio::fs::remove_file(&patch_path).await;
         Ok(serde_json::json!({
@@ -280,8 +348,8 @@ impl RepoManager {
             .and_then(|v| v.as_str())
             .ok_or_else(|| ToolError::invalid_params("message is required"))?;
         let argv = vec!["commit".to_string(), "-m".to_string(), message.to_string()];
-        let (code, stdout, stderr) = self
-            .run_command(&repo_root, "git", &argv, Some(30_000))
+        let (code, stdout, stderr, _) = self
+            .run_command(&repo_root, "git", &argv, Some(30_000), None, true)
             .await?;
         Ok(
             serde_json::json!({"success": code == 0, "stdout": String::from_utf8_lossy(&stdout), "stderr": String::from_utf8_lossy(&stderr)}),
@@ -299,8 +367,8 @@ impl RepoManager {
             .and_then(|v| v.as_str())
             .ok_or_else(|| ToolError::invalid_params("sha is required"))?;
         let argv = vec!["revert".to_string(), sha.to_string()];
-        let (code, stdout, stderr) = self
-            .run_command(&repo_root, "git", &argv, Some(30_000))
+        let (code, stdout, stderr, _) = self
+            .run_command(&repo_root, "git", &argv, Some(30_000), None, true)
             .await?;
         Ok(
             serde_json::json!({"success": code == 0, "stdout": String::from_utf8_lossy(&stdout), "stderr": String::from_utf8_lossy(&stderr)}),
@@ -322,8 +390,8 @@ impl RepoManager {
             .and_then(|v| v.as_str())
             .unwrap_or("HEAD");
         let argv = vec!["push".to_string(), remote.to_string(), branch.to_string()];
-        let (code, stdout, stderr) = self
-            .run_command(&repo_root, "git", &argv, Some(60_000))
+        let (code, stdout, stderr, _) = self
+            .run_command(&repo_root, "git", &argv, Some(60_000), None, true)
             .await?;
         Ok(
             serde_json::json!({"success": code == 0, "stdout": String::from_utf8_lossy(&stdout), "stderr": String::from_utf8_lossy(&stderr)}),

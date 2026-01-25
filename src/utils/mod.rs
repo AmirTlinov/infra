@@ -11,6 +11,7 @@ pub mod redact;
 pub mod runbook_dsl;
 pub mod sandbox;
 pub mod sql;
+pub mod stdin;
 pub mod suggest;
 pub mod template;
 pub mod text;
