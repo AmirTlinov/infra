@@ -1,41 +1,34 @@
 # Infra
 
-Infra is a production‑grade **stdio MCP server** for AI‑native operations: SSH, HTTP client, Postgres, runbooks, pipelines, intents, artifacts, audit, and state — fast, deterministic, and safe by default.
+Infra is a production‑grade **stdio MCP server** for AI‑agent operations. It provides a single, deterministic interface for SSH, HTTP, Postgres, runbooks, pipelines, intents, artifacts, audit, and state.
 
-## Who it’s for
-- Teams that need reproducible ops via MCP.
-- AI agents that require a single, reliable interface to infrastructure.
+## What you can do
+- Run safe, repeatable infrastructure actions from AI agents.
+- Orchestrate multi‑step workflows with runbooks and intents.
+- Store evidence/audit trails for debugging and compliance.
 
-## What you get
-- **Ops tools**: SSH / API / SQL / Repo / Pipelines.
-- **Runbooks & Intents**: orchestration for multi‑step workflows.
-- **Audit & Evidence**: traceable outputs for debugging and compliance.
-- **AI‑friendly DX**: strict schemas, action aliases, list filters, clear errors.
+## How to use (as an MCP tool)
+Infra runs as a stdio MCP server. Point your MCP client to the binary and call tools directly.
 
-## Quick start (local)
-1) Diagnose:
+Example MCP config (conceptual):
+```
+command: infra
+args: []
+```
 
-`./tools/doctor`
+## Project isolation (important)
+To avoid mixing runbooks/profiles across projects, isolate per‑repo state:
 
-2) Run all gates (fmt + clippy + tests):
-
-`./tools/gate`
-
-3) Run the MCP server:
-
-`cargo run --release`
-
-## Project isolation (recommended)
-Prevent cross‑project runbook bleed by isolating profiles per repo:
-
-`MCP_PROFILES_DIR=/path/to/project/.infra`
+```
+MCP_PROFILES_DIR=/path/to/project/.infra
+```
 
 Optional explicit paths:
 - `MCP_RUNBOOKS_PATH=/path/to/project/.infra/runbooks.json`
 - `MCP_CAPABILITIES_PATH=/path/to/project/.infra/capabilities.json`
 - `MCP_CONTEXT_REPO_ROOT=/path/to/project/.infra/artifacts`
 
-## Example calls
+## Common calls
 List runbooks:
 ```
 {"action":"list","query":"k8s","tags":["gitops"],"limit":20}
@@ -46,14 +39,26 @@ Run a runbook:
 {"action":"run","name":"k8s.diff","input":{"overlay":"./overlays/dev"}}
 ```
 
-## Documentation
-- `mcp_config.md` — MCP client config
-- `docs/INTEGRATION.md` — integration checks
-- `docs/RUNBOOK.md` — runbook guidance
-- `SECURITY.md` — security policy
-- `PUBLIC_RELEASE_CHECKLIST.md` — release hygiene
+## Capabilities overview
+- **SSH**: execute commands, batch runs, stream logs.
+- **HTTP**: profile‑based API calls, pagination, downloads.
+- **Postgres**: query, batch, export, schema‑safe operations.
+- **Repo**: git/render/patch operations with safety gates.
+- **Pipelines**: stream data between HTTP/SFTP/Postgres.
+- **Runbooks/Intents**: workflow orchestration.
+- **Artifacts/Audit/Evidence**: traceable outputs.
 
-## Key files
-- `src/main.rs` — stdio entrypoint
-- `src/mcp/server.rs` — MCP routing
-- `src/app.rs` — wiring (DI)
+## Security notes
+- Prefer read‑only actions unless explicitly required.
+- Use timeouts (`timeout_ms`) and limit list sizes.
+- Enable sensitive export only when necessary.
+
+## Documentation
+- `mcp_config.md` — MCP client configuration
+- `docs/RUNBOOK.md` — runbook guidance
+- `docs/INTEGRATION.md` — integration checks
+- `SECURITY.md` — security policy
+
+## For contributors
+- `./tools/doctor` — diagnostics
+- `./tools/gate` — fmt + clippy + tests
