@@ -1,58 +1,59 @@
 # Infra
 
-Infra — production‑grade stdio MCP‑сервер для операционных задач AI‑агентов: SSH, HTTP‑клиент, Postgres, runbooks, pipelines, intents, artifacts, audit и state.
+Infra is a production‑grade **stdio MCP server** for AI‑native operations: SSH, HTTP client, Postgres, runbooks, pipelines, intents, artifacts, audit, and state — fast, deterministic, and safe by default.
 
-## Для кого
-- Команды, которым нужны безопасные и воспроизводимые ops‑действия через MCP.
-- AI‑агенты, которым нужен единый, быстрый и детерминированный интерфейс к инфраструктуре.
+## Who it’s for
+- Teams that need reproducible ops via MCP.
+- AI agents that require a single, reliable interface to infrastructure.
 
-## Что внутри
-- **Ops‑инструменты**: SSH/API/SQL/Repo/Pipelines.
-- **Runbooks/Intents**: оркестрация многошаговых действий.
-- **Audit/Evidence**: следы выполнения и артефакты для отладки.
-- **DX**: строгие схемы, алиасы действий, фильтры списка, читаемые ошибки.
+## What you get
+- **Ops tools**: SSH / API / SQL / Repo / Pipelines.
+- **Runbooks & Intents**: orchestration for multi‑step workflows.
+- **Audit & Evidence**: traceable outputs for debugging and compliance.
+- **AI‑friendly DX**: strict schemas, action aliases, list filters, clear errors.
 
-## Быстрый старт (локально)
-1) Диагностика:
+## Quick start (local)
+1) Diagnose:
 
 `./tools/doctor`
 
-2) Гейты качества (fmt + clippy + tests):
+2) Run all gates (fmt + clippy + tests):
 
 `./tools/gate`
 
-3) Запуск MCP‑сервера:
+3) Run the MCP server:
 
 `cargo run --release`
 
-## Рекомендуемая конфигурация (без смешения проектов)
-Чтобы агент не видел runbooks других проектов, изолируй профили:
-- `MCP_PROFILES_DIR=/path/to/project/.infra`
+## Project isolation (recommended)
+Prevent cross‑project runbook bleed by isolating profiles per repo:
 
-Точечные пути при необходимости:
+`MCP_PROFILES_DIR=/path/to/project/.infra`
+
+Optional explicit paths:
 - `MCP_RUNBOOKS_PATH=/path/to/project/.infra/runbooks.json`
 - `MCP_CAPABILITIES_PATH=/path/to/project/.infra/capabilities.json`
 - `MCP_CONTEXT_REPO_ROOT=/path/to/project/.infra/artifacts`
 
-## Примеры запросов
-Список runbooks:
+## Example calls
+List runbooks:
 ```
 {"action":"list","query":"k8s","tags":["gitops"],"limit":20}
 ```
 
-Запуск runbook:
+Run a runbook:
 ```
 {"action":"run","name":"k8s.diff","input":{"overlay":"./overlays/dev"}}
 ```
 
-## Документация
-- `mcp_config.md` — конфиг MCP‑клиента
-- `docs/INTEGRATION.md` — интеграционные проверки
-- `docs/RUNBOOK.md` — гайды по runbooks
-- `SECURITY.md` — безопасность
-- `PUBLIC_RELEASE_CHECKLIST.md` — релиз‑гигиена
+## Documentation
+- `mcp_config.md` — MCP client config
+- `docs/INTEGRATION.md` — integration checks
+- `docs/RUNBOOK.md` — runbook guidance
+- `SECURITY.md` — security policy
+- `PUBLIC_RELEASE_CHECKLIST.md` — release hygiene
 
-## Ключевые файлы
+## Key files
 - `src/main.rs` — stdio entrypoint
 - `src/mcp/server.rs` — MCP routing
 - `src/app.rs` — wiring (DI)
