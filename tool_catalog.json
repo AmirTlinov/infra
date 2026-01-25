@@ -1,0 +1,7147 @@
+[
+  {
+    "name": "help",
+    "description": "Краткая справка по использованию Infra и доступным инструментам.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "tool": {
+          "type": "string",
+          "description": "Название инструмента для детализации. Оставьте пустым для общего описания."
+        },
+        "action": {
+          "type": "string",
+          "description": "Опционально: конкретный action внутри инструмента (например, exec/profile_upsert)."
+        },
+        "query": {
+          "type": "string",
+          "description": "Поиск по инструментам/alias/action/полям. Пример: { query: \"ssh exec\" }"
+        },
+        "limit": {
+          "type": "integer",
+          "description": "Максимум результатов для query (по умолчанию 20)."
+        },
+        "output": {
+          "type": "object",
+          "description": "Output shaping (path/pick/omit/map).",
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "pick": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "omit": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "map": {
+              "type": "object"
+            },
+            "missing": {
+              "type": "string",
+              "enum": [
+                "error",
+                "empty",
+                "null",
+                "undefined"
+              ]
+            },
+            "default": {
+              "type": [
+                "string",
+                "number",
+                "boolean",
+                "object",
+                "array",
+                "null"
+              ]
+            }
+          },
+          "additionalProperties": true
+        },
+        "store_as": {
+          "type": [
+            "string",
+            "object"
+          ]
+        },
+        "store_scope": {
+          "type": "string",
+          "enum": [
+            "session",
+            "persistent"
+          ]
+        },
+        "trace_id": {
+          "type": "string"
+        },
+        "span_id": {
+          "type": "string"
+        },
+        "parent_span_id": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "legend",
+    "description": "Семантическая легенда: что значат общие поля и как Infra разрешает project/target/profile/preset/alias.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "output": {
+          "type": "object",
+          "description": "Output shaping (path/pick/omit/map).",
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "pick": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "omit": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "map": {
+              "type": "object"
+            },
+            "missing": {
+              "type": "string",
+              "enum": [
+                "error",
+                "empty",
+                "null",
+                "undefined"
+              ]
+            },
+            "default": {
+              "type": [
+                "string",
+                "number",
+                "boolean",
+                "object",
+                "array",
+                "null"
+              ]
+            }
+          },
+          "additionalProperties": true
+        },
+        "store_as": {
+          "type": [
+            "string",
+            "object"
+          ]
+        },
+        "store_scope": {
+          "type": "string",
+          "enum": [
+            "session",
+            "persistent"
+          ]
+        },
+        "trace_id": {
+          "type": "string"
+        },
+        "span_id": {
+          "type": "string"
+        },
+        "parent_span_id": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "mcp_state",
+    "description": "Session/persistent state store for cross-tool workflows.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "set",
+            "get",
+            "list",
+            "unset",
+            "clear",
+            "dump"
+          ]
+        },
+        "key": {
+          "type": "string"
+        },
+        "value": {},
+        "scope": {
+          "type": "string",
+          "enum": [
+            "session",
+            "persistent",
+            "any"
+          ]
+        },
+        "prefix": {
+          "type": "string"
+        },
+        "include_values": {
+          "type": "boolean"
+        },
+        "output": {
+          "type": "object",
+          "description": "Output shaping (path/pick/omit/map).",
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "pick": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "omit": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "map": {
+              "type": "object"
+            },
+            "missing": {
+              "type": "string",
+              "enum": [
+                "error",
+                "empty",
+                "null",
+                "undefined"
+              ]
+            },
+            "default": {
+              "type": [
+                "string",
+                "number",
+                "boolean",
+                "object",
+                "array",
+                "null"
+              ]
+            }
+          },
+          "additionalProperties": true
+        },
+        "store_as": {
+          "type": [
+            "string",
+            "object"
+          ]
+        },
+        "store_scope": {
+          "type": "string",
+          "enum": [
+            "session",
+            "persistent"
+          ]
+        },
+        "trace_id": {
+          "type": "string"
+        },
+        "span_id": {
+          "type": "string"
+        },
+        "parent_span_id": {
+          "type": "string"
+        },
+        "preset": {
+          "type": "string"
+        },
+        "preset_name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "mcp_jobs",
+    "description": "Unified job registry: status/wait/logs/cancel/list.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "job_status",
+            "job_wait",
+            "job_logs_tail",
+            "tail_job",
+            "follow_job",
+            "job_cancel",
+            "job_forget",
+            "job_list"
+          ]
+        },
+        "job_id": {
+          "type": "string"
+        },
+        "timeout_ms": {
+          "type": "integer"
+        },
+        "poll_interval_ms": {
+          "type": "integer"
+        },
+        "lines": {
+          "type": "integer"
+        },
+        "signal": {
+          "type": "string"
+        },
+        "limit": {
+          "type": "integer"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "queued",
+            "running",
+            "succeeded",
+            "failed",
+            "canceled"
+          ]
+        },
+        "output": {
+          "type": "object",
+          "description": "Output shaping (path/pick/omit/map).",
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "pick": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "omit": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "map": {
+              "type": "object"
+            },
+            "missing": {
+              "type": "string",
+              "enum": [
+                "error",
+                "empty",
+                "null",
+                "undefined"
+              ]
+            },
+            "default": {
+              "type": [
+                "string",
+                "number",
+                "boolean",
+                "object",
+                "array",
+                "null"
+              ]
+            }
+          },
+          "additionalProperties": true
+        },
+        "store_as": {
+          "type": [
+            "string",
+            "object"
+          ]
+        },
+        "store_scope": {
+          "type": "string",
+          "enum": [
+            "session",
+            "persistent"
+          ]
+        },
+        "trace_id": {
+          "type": "string"
+        },
+        "span_id": {
+          "type": "string"
+        },
+        "parent_span_id": {
+          "type": "string"
+        },
+        "preset": {
+          "type": "string"
+        },
+        "preset_name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "mcp_artifacts",
+    "description": "Artifacts: read/list artifact:// refs (bounded by default).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "get",
+            "head",
+            "tail",
+            "list"
+          ]
+        },
+        "uri": {
+          "type": "string"
+        },
+        "rel": {
+          "type": "string"
+        },
+        "prefix": {
+          "type": "string"
+        },
+        "encoding": {
+          "type": "string",
+          "enum": [
+            "utf8",
+            "base64"
+          ]
+        },
+        "include_secrets": {
+          "type": "boolean"
+        },
+        "offset": {
+          "type": "integer"
+        },
+        "max_bytes": {
+          "type": "integer"
+        },
+        "limit": {
+          "type": "integer"
+        },
+        "output": {
+          "type": "object",
+          "description": "Output shaping (path/pick/omit/map).",
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "pick": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "omit": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "map": {
+              "type": "object"
+            },
+            "missing": {
+              "type": "string",
+              "enum": [
+                "error",
+                "empty",
+                "null",
+                "undefined"
+              ]
+            },
+            "default": {
+              "type": [
+                "string",
+                "number",
+                "boolean",
+                "object",
+                "array",
+                "null"
+              ]
+            }
+          },
+          "additionalProperties": true
+        },
+        "store_as": {
+          "type": [
+            "string",
+            "object"
+          ]
+        },
+        "store_scope": {
+          "type": "string",
+          "enum": [
+            "session",
+            "persistent"
+          ]
+        },
+        "trace_id": {
+          "type": "string"
+        },
+        "span_id": {
+          "type": "string"
+        },
+        "parent_span_id": {
+          "type": "string"
+        },
+        "preset": {
+          "type": "string"
+        },
+        "preset_name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "mcp_project",
+    "description": "Project registry: bind SSH/env profiles to named projects + manage active project.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "project_upsert",
+            "project_get",
+            "project_list",
+            "project_delete",
+            "project_use",
+            "project_active",
+            "project_unuse"
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "project": {
+          "type": "object"
+        },
+        "description": {
+          "type": "string"
+        },
+        "default_target": {
+          "type": "string"
+        },
+        "targets": {
+          "type": "object"
+        },
+        "policy_profiles": {
+          "type": "object"
+        },
+        "scope": {
+          "type": "string",
+          "enum": [
+            "session",
+            "persistent",
+            "any"
+          ]
+        },
+        "output": {
+          "type": "object",
+          "description": "Output shaping (path/pick/omit/map).",
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "pick": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "omit": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "map": {
+              "type": "object"
+            },
+            "missing": {
+              "type": "string",
+              "enum": [
+                "error",
+                "empty",
+                "null",
+                "undefined"
+              ]
+            },
+            "default": {
+              "type": [
+                "string",
+                "number",
+                "boolean",
+                "object",
+                "array",
+                "null"
+              ]
+            }
+          },
+          "additionalProperties": true
+        },
+        "store_as": {
+          "type": [
+            "string",
+            "object"
+          ]
+        },
+        "store_scope": {
+          "type": "string",
+          "enum": [
+            "session",
+            "persistent"
+          ]
+        },
+        "trace_id": {
+          "type": "string"
+        },
+        "span_id": {
+          "type": "string"
+        },
+        "parent_span_id": {
+          "type": "string"
+        },
+        "preset": {
+          "type": "string"
+        },
+        "preset_name": {
+          "type": "string"
+        },
+        "limit": {
+          "type": "integer",
+          "description": "Max items to return."
+        },
+        "offset": {
+          "type": "integer",
+          "description": "Items to skip before returning results."
+        },
+        "query": {
+          "type": "string",
+          "description": "Free-text search across name/description."
+        },
+        "where": {
+          "type": "object",
+          "description": "Exact-match filters on list item fields."
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "mcp_context",
+    "description": "Project context cache: detect runtime signals and summarize project state.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "get",
+            "refresh",
+            "summary",
+            "list",
+            "stats"
+          ]
+        },
+        "key": {
+          "type": "string"
+        },
+        "project": {
+          "type": "string"
+        },
+        "project_name": {
+          "type": "string"
+        },
+        "target": {
+          "type": "string"
+        },
+        "project_target": {
+          "type": "string"
+        },
+        "environment": {
+          "type": "string"
+        },
+        "cwd": {
+          "type": "string"
+        },
+        "repo_root": {
+          "type": "string"
+        },
+        "refresh": {
+          "type": "boolean"
+        },
+        "output": {
+          "type": "object",
+          "description": "Output shaping (path/pick/omit/map).",
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "pick": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "omit": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "map": {
+              "type": "object"
+            },
+            "missing": {
+              "type": "string",
+              "enum": [
+                "error",
+                "empty",
+                "null",
+                "undefined"
+              ]
+            },
+            "default": {
+              "type": [
+                "string",
+                "number",
+                "boolean",
+                "object",
+                "array",
+                "null"
+              ]
+            }
+          },
+          "additionalProperties": true
+        },
+        "store_as": {
+          "type": [
+            "string",
+            "object"
+          ]
+        },
+        "store_scope": {
+          "type": "string",
+          "enum": [
+            "session",
+            "persistent"
+          ]
+        },
+        "trace_id": {
+          "type": "string"
+        },
+        "span_id": {
+          "type": "string"
+        },
+        "parent_span_id": {
+          "type": "string"
+        },
+        "preset": {
+          "type": "string"
+        },
+        "preset_name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "mcp_workspace",
+    "description": "Unified workspace UX: summary, suggestions, and diagnostics.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "summary",
+            "suggest",
+            "diagnose",
+            "store_status",
+            "run",
+            "cleanup",
+            "stats"
+          ]
+        },
+        "key": {
+          "type": "string"
+        },
+        "project": {
+          "type": "string"
+        },
+        "project_name": {
+          "type": "string"
+        },
+        "target": {
+          "type": "string"
+        },
+        "project_target": {
+          "type": "string"
+        },
+        "environment": {
+          "type": "string"
+        },
+        "cwd": {
+          "type": "string"
+        },
+        "repo_root": {
+          "type": "string"
+        },
+        "limit": {
+          "type": "number"
+        },
+        "include_untagged": {
+          "type": "boolean"
+        },
+        "name": {
+          "type": "string"
+        },
+        "runbook": {
+          "type": "object"
+        },
+        "input": {
+          "type": "object"
+        },
+        "inputs": {
+          "type": "object"
+        },
+        "intent": {
+          "type": "object"
+        },
+        "intent_type": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string"
+        },
+        "stop_on_error": {
+          "type": "boolean"
+        },
+        "template_missing": {
+          "type": "string",
+          "enum": [
+            "error",
+            "empty",
+            "null",
+            "undefined"
+          ]
+        },
+        "seed_state": {
+          "type": "object"
+        },
+        "seed_state_scope": {
+          "type": "string",
+          "enum": [
+            "session",
+            "persistent",
+            "any"
+          ]
+        },
+        "apply": {
+          "type": "boolean"
+        },
+        "cleanup": {
+          "type": "boolean"
+        },
+        "overwrite": {
+          "type": "boolean"
+        },
+        "include_dirs": {
+          "type": "boolean"
+        },
+        "output": {
+          "type": "object",
+          "description": "Output shaping (path/pick/omit/map).",
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "pick": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "omit": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "map": {
+              "type": "object"
+            },
+            "missing": {
+              "type": "string",
+              "enum": [
+                "error",
+                "empty",
+                "null",
+                "undefined"
+              ]
+            },
+            "default": {
+              "type": [
+                "string",
+                "number",
+                "boolean",
+                "object",
+                "array",
+                "null"
+              ]
+            }
+          },
+          "additionalProperties": true
+        },
+        "store_as": {
+          "type": [
+            "string",
+            "object"
+          ]
+        },
+        "store_scope": {
+          "type": "string",
+          "enum": [
+            "session",
+            "persistent"
+          ]
+        },
+        "trace_id": {
+          "type": "string"
+        },
+        "span_id": {
+          "type": "string"
+        },
+        "parent_span_id": {
+          "type": "string"
+        },
+        "preset": {
+          "type": "string"
+        },
+        "preset_name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "mcp_env",
+    "description": "Encrypted env bundles + safe remote apply via SSH/SFTP.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "profile_upsert",
+            "profile_get",
+            "profile_list",
+            "profile_delete",
+            "write_remote",
+            "run_remote"
+          ]
+        },
+        "profile_name": {
+          "type": "string"
+        },
+        "include_secrets": {
+          "type": "boolean"
+        },
+        "description": {
+          "type": "string"
+        },
+        "variables": {
+          "type": "object"
+        },
+        "env": {
+          "type": "object"
+        },
+        "data": {
+          "type": "object"
+        },
+        "secrets": {
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "project": {
+          "type": "string"
+        },
+        "project_name": {
+          "type": "string"
+        },
+        "target": {
+          "type": "string"
+        },
+        "project_target": {
+          "type": "string"
+        },
+        "environment": {
+          "type": "string"
+        },
+        "ssh_profile_name": {
+          "type": "string"
+        },
+        "ssh_profile": {
+          "type": "string"
+        },
+        "env_profile": {
+          "type": "string"
+        },
+        "vault_profile_name": {
+          "type": "string"
+        },
+        "vault_profile": {
+          "type": "string"
+        },
+        "remote_path": {
+          "type": "string"
+        },
+        "mode": {
+          "type": "integer"
+        },
+        "mkdirs": {
+          "type": "boolean"
+        },
+        "overwrite": {
+          "type": "boolean"
+        },
+        "backup": {
+          "type": "boolean"
+        },
+        "command": {
+          "type": "string"
+        },
+        "cwd": {
+          "type": "string"
+        },
+        "stdin": {
+          "type": "string"
+        },
+        "timeout_ms": {
+          "type": "integer"
+        },
+        "pty": {
+          "type": [
+            "boolean",
+            "object"
+          ]
+        },
+        "output": {
+          "type": "object",
+          "description": "Output shaping (path/pick/omit/map).",
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "pick": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "omit": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "map": {
+              "type": "object"
+            },
+            "missing": {
+              "type": "string",
+              "enum": [
+                "error",
+                "empty",
+                "null",
+                "undefined"
+              ]
+            },
+            "default": {
+              "type": [
+                "string",
+                "number",
+                "boolean",
+                "object",
+                "array",
+                "null"
+              ]
+            }
+          },
+          "additionalProperties": true
+        },
+        "store_as": {
+          "type": [
+            "string",
+            "object"
+          ]
+        },
+        "store_scope": {
+          "type": "string",
+          "enum": [
+            "session",
+            "persistent"
+          ]
+        },
+        "trace_id": {
+          "type": "string"
+        },
+        "span_id": {
+          "type": "string"
+        },
+        "parent_span_id": {
+          "type": "string"
+        },
+        "preset": {
+          "type": "string"
+        },
+        "preset_name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "mcp_vault",
+    "description": "HashiCorp Vault: профили + диагностика (KV v2 + AppRole auto-login).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "profile_upsert",
+            "profile_get",
+            "profile_list",
+            "profile_delete",
+            "profile_test"
+          ]
+        },
+        "profile_name": {
+          "type": "string"
+        },
+        "include_secrets": {
+          "type": "boolean"
+        },
+        "addr": {
+          "type": "string"
+        },
+        "namespace": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "auth_type": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "token": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "role_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "secret_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "timeout_ms": {
+          "type": "integer"
+        },
+        "output": {
+          "type": "object",
+          "description": "Output shaping (path/pick/omit/map).",
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "pick": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "omit": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "map": {
+              "type": "object"
+            },
+            "missing": {
+              "type": "string",
+              "enum": [
+                "error",
+                "empty",
+                "null",
+                "undefined"
+              ]
+            },
+            "default": {
+              "type": [
+                "string",
+                "number",
+                "boolean",
+                "object",
+                "array",
+                "null"
+              ]
+            }
+          },
+          "additionalProperties": true
+        },
+        "store_as": {
+          "type": [
+            "string",
+            "object"
+          ]
+        },
+        "store_scope": {
+          "type": "string",
+          "enum": [
+            "session",
+            "persistent"
+          ]
+        },
+        "trace_id": {
+          "type": "string"
+        },
+        "span_id": {
+          "type": "string"
+        },
+        "parent_span_id": {
+          "type": "string"
+        },
+        "preset": {
+          "type": "string"
+        },
+        "preset_name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "mcp_runbook",
+    "description": "Runbooks: store, list, and execute multi-step workflows.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "runbook_upsert",
+            "runbook_upsert_dsl",
+            "runbook_get",
+            "runbook_list",
+            "runbook_delete",
+            "runbook_run",
+            "runbook_run_dsl",
+            "runbook_compile"
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "runbook": {
+          "type": "object"
+        },
+        "dsl": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        },
+        "input": {
+          "type": "object"
+        },
+        "seed_state": {
+          "type": "object"
+        },
+        "seed_state_scope": {
+          "type": "string",
+          "enum": [
+            "session",
+            "persistent"
+          ]
+        },
+        "stop_on_error": {
+          "type": "boolean"
+        },
+        "template_missing": {
+          "type": "string",
+          "enum": [
+            "error",
+            "empty",
+            "null",
+            "undefined"
+          ]
+        },
+        "output": {
+          "type": "object",
+          "description": "Output shaping (path/pick/omit/map).",
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "pick": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "omit": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "map": {
+              "type": "object"
+            },
+            "missing": {
+              "type": "string",
+              "enum": [
+                "error",
+                "empty",
+                "null",
+                "undefined"
+              ]
+            },
+            "default": {
+              "type": [
+                "string",
+                "number",
+                "boolean",
+                "object",
+                "array",
+                "null"
+              ]
+            }
+          },
+          "additionalProperties": true
+        },
+        "store_as": {
+          "type": [
+            "string",
+            "object"
+          ]
+        },
+        "store_scope": {
+          "type": "string",
+          "enum": [
+            "session",
+            "persistent"
+          ]
+        },
+        "trace_id": {
+          "type": "string"
+        },
+        "span_id": {
+          "type": "string"
+        },
+        "parent_span_id": {
+          "type": "string"
+        },
+        "preset": {
+          "type": "string"
+        },
+        "preset_name": {
+          "type": "string"
+        },
+        "limit": {
+          "type": "integer",
+          "description": "Max items to return."
+        },
+        "offset": {
+          "type": "integer",
+          "description": "Items to skip before returning results."
+        },
+        "query": {
+          "type": "string",
+          "description": "Free-text search across name/description."
+        },
+        "where": {
+          "type": "object",
+          "description": "Exact-match filters on list item fields."
+        },
+        "tags": {
+          "type": [
+            "array",
+            "string"
+          ],
+          "items": {
+            "type": "string"
+          },
+          "description": "Filter by tags (array or comma-separated string)."
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "mcp_capability",
+    "description": "Capability registry for intent→runbook mappings.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "list",
+            "get",
+            "set",
+            "delete",
+            "resolve",
+            "suggest",
+            "graph",
+            "stats"
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "intent": {
+          "type": "string"
+        },
+        "capability": {
+          "type": "object"
+        },
+        "project": {
+          "type": "string"
+        },
+        "project_name": {
+          "type": "string"
+        },
+        "target": {
+          "type": "string"
+        },
+        "project_target": {
+          "type": "string"
+        },
+        "environment": {
+          "type": "string"
+        },
+        "cwd": {
+          "type": "string"
+        },
+        "repo_root": {
+          "type": "string"
+        },
+        "limit": {
+          "type": "integer",
+          "description": "Max items to return."
+        },
+        "offset": {
+          "type": "integer",
+          "description": "Items to skip before returning results."
+        },
+        "query": {
+          "type": "string",
+          "description": "Free-text search across name/description."
+        },
+        "where": {
+          "type": "object",
+          "description": "Exact-match filters on list item fields."
+        },
+        "tags": {
+          "type": [
+            "array",
+            "string"
+          ],
+          "items": {
+            "type": "string"
+          },
+          "description": "Filter by tags (array or comma-separated string)."
+        },
+        "output": {
+          "type": "object",
+          "description": "Output shaping (path/pick/omit/map).",
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "pick": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "omit": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "map": {
+              "type": "object"
+            },
+            "missing": {
+              "type": "string",
+              "enum": [
+                "error",
+                "empty",
+                "null",
+                "undefined"
+              ]
+            },
+            "default": {
+              "type": [
+                "string",
+                "number",
+                "boolean",
+                "object",
+                "array",
+                "null"
+              ]
+            }
+          },
+          "additionalProperties": true
+        },
+        "store_as": {
+          "type": [
+            "string",
+            "object"
+          ]
+        },
+        "store_scope": {
+          "type": "string",
+          "enum": [
+            "session",
+            "persistent"
+          ]
+        },
+        "trace_id": {
+          "type": "string"
+        },
+        "span_id": {
+          "type": "string"
+        },
+        "parent_span_id": {
+          "type": "string"
+        },
+        "preset": {
+          "type": "string"
+        },
+        "preset_name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "mcp_intent",
+    "description": "Intent compiler/executor (intent → plan → runbook).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "compile",
+            "dry_run",
+            "execute",
+            "explain"
+          ]
+        },
+        "intent": {
+          "type": "object"
+        },
+        "apply": {
+          "type": "boolean"
+        },
+        "project": {
+          "type": "string"
+        },
+        "project_name": {
+          "type": "string"
+        },
+        "target": {
+          "type": "string"
+        },
+        "project_target": {
+          "type": "string"
+        },
+        "environment": {
+          "type": "string"
+        },
+        "cwd": {
+          "type": "string"
+        },
+        "repo_root": {
+          "type": "string"
+        },
+        "context_key": {
+          "type": "string"
+        },
+        "context_refresh": {
+          "type": "boolean"
+        },
+        "stop_on_error": {
+          "type": "boolean"
+        },
+        "template_missing": {
+          "type": "string",
+          "enum": [
+            "error",
+            "empty",
+            "null",
+            "undefined"
+          ]
+        },
+        "save_evidence": {
+          "type": "boolean"
+        },
+        "output": {
+          "type": "object",
+          "description": "Output shaping (path/pick/omit/map).",
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "pick": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "omit": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "map": {
+              "type": "object"
+            },
+            "missing": {
+              "type": "string",
+              "enum": [
+                "error",
+                "empty",
+                "null",
+                "undefined"
+              ]
+            },
+            "default": {
+              "type": [
+                "string",
+                "number",
+                "boolean",
+                "object",
+                "array",
+                "null"
+              ]
+            }
+          },
+          "additionalProperties": true
+        },
+        "store_as": {
+          "type": [
+            "string",
+            "object"
+          ]
+        },
+        "store_scope": {
+          "type": "string",
+          "enum": [
+            "session",
+            "persistent"
+          ]
+        },
+        "trace_id": {
+          "type": "string"
+        },
+        "span_id": {
+          "type": "string"
+        },
+        "parent_span_id": {
+          "type": "string"
+        },
+        "preset": {
+          "type": "string"
+        },
+        "preset_name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "mcp_evidence",
+    "description": "Evidence bundles produced by intent executions.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "list",
+            "get"
+          ]
+        },
+        "id": {
+          "type": "string"
+        },
+        "limit": {
+          "type": "integer"
+        },
+        "offset": {
+          "type": "integer"
+        },
+        "query": {
+          "type": "string"
+        },
+        "output": {
+          "type": "object",
+          "description": "Output shaping (path/pick/omit/map).",
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "pick": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "omit": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "map": {
+              "type": "object"
+            },
+            "missing": {
+              "type": "string",
+              "enum": [
+                "error",
+                "empty",
+                "null",
+                "undefined"
+              ]
+            },
+            "default": {
+              "type": [
+                "string",
+                "number",
+                "boolean",
+                "object",
+                "array",
+                "null"
+              ]
+            }
+          },
+          "additionalProperties": true
+        },
+        "store_as": {
+          "type": [
+            "string",
+            "object"
+          ]
+        },
+        "store_scope": {
+          "type": "string",
+          "enum": [
+            "session",
+            "persistent"
+          ]
+        },
+        "trace_id": {
+          "type": "string"
+        },
+        "span_id": {
+          "type": "string"
+        },
+        "parent_span_id": {
+          "type": "string"
+        },
+        "preset": {
+          "type": "string"
+        },
+        "preset_name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "mcp_alias",
+    "description": "Alias registry for short names and reusable tool shortcuts.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "alias_upsert",
+            "alias_get",
+            "alias_list",
+            "alias_delete",
+            "alias_resolve"
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "alias": {
+          "type": "object"
+        },
+        "tool": {
+          "type": "string"
+        },
+        "args": {
+          "type": "object"
+        },
+        "preset": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "output": {
+          "type": "object",
+          "description": "Output shaping (path/pick/omit/map).",
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "pick": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "omit": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "map": {
+              "type": "object"
+            },
+            "missing": {
+              "type": "string",
+              "enum": [
+                "error",
+                "empty",
+                "null",
+                "undefined"
+              ]
+            },
+            "default": {
+              "type": [
+                "string",
+                "number",
+                "boolean",
+                "object",
+                "array",
+                "null"
+              ]
+            }
+          },
+          "additionalProperties": true
+        },
+        "store_as": {
+          "type": [
+            "string",
+            "object"
+          ]
+        },
+        "store_scope": {
+          "type": "string",
+          "enum": [
+            "session",
+            "persistent"
+          ]
+        },
+        "trace_id": {
+          "type": "string"
+        },
+        "span_id": {
+          "type": "string"
+        },
+        "parent_span_id": {
+          "type": "string"
+        },
+        "limit": {
+          "type": "integer",
+          "description": "Max items to return."
+        },
+        "offset": {
+          "type": "integer",
+          "description": "Items to skip before returning results."
+        },
+        "query": {
+          "type": "string",
+          "description": "Free-text search across name/description."
+        },
+        "where": {
+          "type": "object",
+          "description": "Exact-match filters on list item fields."
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "mcp_preset",
+    "description": "Preset registry for reusable tool arguments.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "preset_upsert",
+            "preset_get",
+            "preset_list",
+            "preset_delete"
+          ]
+        },
+        "tool": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "preset": {
+          "type": "object"
+        },
+        "output": {
+          "type": "object",
+          "description": "Output shaping (path/pick/omit/map).",
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "pick": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "omit": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "map": {
+              "type": "object"
+            },
+            "missing": {
+              "type": "string",
+              "enum": [
+                "error",
+                "empty",
+                "null",
+                "undefined"
+              ]
+            },
+            "default": {
+              "type": [
+                "string",
+                "number",
+                "boolean",
+                "object",
+                "array",
+                "null"
+              ]
+            }
+          },
+          "additionalProperties": true
+        },
+        "store_as": {
+          "type": [
+            "string",
+            "object"
+          ]
+        },
+        "store_scope": {
+          "type": "string",
+          "enum": [
+            "session",
+            "persistent"
+          ]
+        },
+        "trace_id": {
+          "type": "string"
+        },
+        "span_id": {
+          "type": "string"
+        },
+        "parent_span_id": {
+          "type": "string"
+        },
+        "limit": {
+          "type": "integer",
+          "description": "Max items to return."
+        },
+        "offset": {
+          "type": "integer",
+          "description": "Items to skip before returning results."
+        },
+        "query": {
+          "type": "string",
+          "description": "Free-text search across name/description."
+        },
+        "where": {
+          "type": "object",
+          "description": "Exact-match filters on list item fields."
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "mcp_audit",
+    "description": "Audit log access with filtering and tail support.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "audit_list",
+            "audit_tail",
+            "audit_clear",
+            "audit_stats"
+          ]
+        },
+        "limit": {
+          "type": "integer"
+        },
+        "offset": {
+          "type": "integer"
+        },
+        "reverse": {
+          "type": "boolean"
+        },
+        "trace_id": {
+          "type": "string"
+        },
+        "tool": {
+          "type": "string"
+        },
+        "audit_action": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "ok",
+            "error"
+          ]
+        },
+        "since": {
+          "type": "string"
+        },
+        "output": {
+          "type": "object",
+          "description": "Output shaping (path/pick/omit/map).",
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "pick": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "omit": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "map": {
+              "type": "object"
+            },
+            "missing": {
+              "type": "string",
+              "enum": [
+                "error",
+                "empty",
+                "null",
+                "undefined"
+              ]
+            },
+            "default": {
+              "type": [
+                "string",
+                "number",
+                "boolean",
+                "object",
+                "array",
+                "null"
+              ]
+            }
+          },
+          "additionalProperties": true
+        },
+        "store_as": {
+          "type": [
+            "string",
+            "object"
+          ]
+        },
+        "store_scope": {
+          "type": "string",
+          "enum": [
+            "session",
+            "persistent"
+          ]
+        },
+        "span_id": {
+          "type": "string"
+        },
+        "parent_span_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "mcp_pipeline",
+    "description": "Streaming pipelines between HTTP, SFTP, and PostgreSQL.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "run",
+            "describe",
+            "deploy_smoke"
+          ]
+        },
+        "flow": {
+          "type": "string",
+          "enum": [
+            "http_to_sftp",
+            "sftp_to_http",
+            "http_to_postgres",
+            "sftp_to_postgres",
+            "postgres_to_sftp",
+            "postgres_to_http"
+          ]
+        },
+        "project": {
+          "type": "string"
+        },
+        "project_name": {
+          "type": "string"
+        },
+        "target": {
+          "type": "string"
+        },
+        "project_target": {
+          "type": "string"
+        },
+        "environment": {
+          "type": "string"
+        },
+        "vault_profile_name": {
+          "type": "string"
+        },
+        "vault_profile": {
+          "type": "string"
+        },
+        "local_path": {
+          "type": "string"
+        },
+        "remote_path": {
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        },
+        "restart": {
+          "type": "string"
+        },
+        "restart_command": {
+          "type": "string"
+        },
+        "overwrite": {
+          "type": "boolean"
+        },
+        "mkdirs": {
+          "type": "boolean"
+        },
+        "preserve_mtime": {
+          "type": "boolean"
+        },
+        "expect_code": {
+          "type": "integer"
+        },
+        "follow_redirects": {
+          "type": "boolean"
+        },
+        "insecure_ok": {
+          "type": "boolean"
+        },
+        "max_bytes": {
+          "type": "integer"
+        },
+        "settle_ms": {
+          "type": "integer"
+        },
+        "smoke_attempts": {
+          "type": "integer"
+        },
+        "smoke_delay_ms": {
+          "type": "integer"
+        },
+        "smoke_timeout_ms": {
+          "type": "integer"
+        },
+        "http": {
+          "type": "object"
+        },
+        "sftp": {
+          "type": "object"
+        },
+        "postgres": {
+          "type": "object"
+        },
+        "format": {
+          "type": "string",
+          "enum": [
+            "jsonl",
+            "csv"
+          ]
+        },
+        "batch_size": {
+          "type": "integer"
+        },
+        "max_rows": {
+          "type": "integer"
+        },
+        "limit": {
+          "type": "integer"
+        },
+        "offset": {
+          "type": "integer"
+        },
+        "columns": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "columns_sql": {
+          "type": "string"
+        },
+        "order_by": {
+          "type": "array"
+        },
+        "order_by_sql": {
+          "type": "string"
+        },
+        "filters": {
+          "type": "object"
+        },
+        "where_sql": {
+          "type": "string"
+        },
+        "where_params": {
+          "type": "array"
+        },
+        "timeout_ms": {
+          "type": "integer"
+        },
+        "csv_header": {
+          "type": "boolean"
+        },
+        "csv_delimiter": {
+          "type": "string"
+        },
+        "cache": {
+          "type": "object"
+        },
+        "output": {
+          "type": "object",
+          "description": "Output shaping (path/pick/omit/map).",
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "pick": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "omit": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "map": {
+              "type": "object"
+            },
+            "missing": {
+              "type": "string",
+              "enum": [
+                "error",
+                "empty",
+                "null",
+                "undefined"
+              ]
+            },
+            "default": {
+              "type": [
+                "string",
+                "number",
+                "boolean",
+                "object",
+                "array",
+                "null"
+              ]
+            }
+          },
+          "additionalProperties": true
+        },
+        "store_as": {
+          "type": [
+            "string",
+            "object"
+          ]
+        },
+        "store_scope": {
+          "type": "string",
+          "enum": [
+            "session",
+            "persistent"
+          ]
+        },
+        "trace_id": {
+          "type": "string"
+        },
+        "span_id": {
+          "type": "string"
+        },
+        "parent_span_id": {
+          "type": "string"
+        },
+        "preset": {
+          "type": "string"
+        },
+        "preset_name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "mcp_local",
+    "description": "UNSAFE local machine access: exec and filesystem helpers (requires INFRA_UNSAFE_LOCAL=1).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "exec",
+            "batch",
+            "fs_read",
+            "fs_write",
+            "fs_list",
+            "fs_stat",
+            "fs_mkdir",
+            "fs_rm"
+          ]
+        },
+        "command": {
+          "type": "string"
+        },
+        "args": {
+          "type": "array",
+          "items": {}
+        },
+        "cwd": {
+          "type": "string"
+        },
+        "env": {
+          "type": "object"
+        },
+        "stdin": {
+          "type": "string"
+        },
+        "timeout_ms": {
+          "type": "integer"
+        },
+        "inline": {
+          "type": "boolean"
+        },
+        "shell": {
+          "type": [
+            "boolean",
+            "string"
+          ]
+        },
+        "commands": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "parallel": {
+          "type": "boolean"
+        },
+        "stop_on_error": {
+          "type": "boolean"
+        },
+        "path": {
+          "type": "string"
+        },
+        "offset": {
+          "type": "integer"
+        },
+        "length": {
+          "type": "integer"
+        },
+        "encoding": {
+          "type": "string"
+        },
+        "content": {},
+        "content_base64": {
+          "type": "string"
+        },
+        "overwrite": {
+          "type": "boolean"
+        },
+        "mode": {
+          "type": "integer"
+        },
+        "recursive": {
+          "type": "boolean"
+        },
+        "max_depth": {
+          "type": "integer"
+        },
+        "with_stats": {
+          "type": "boolean"
+        },
+        "force": {
+          "type": "boolean"
+        },
+        "output": {
+          "type": "object",
+          "description": "Output shaping (path/pick/omit/map).",
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "pick": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "omit": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "map": {
+              "type": "object"
+            },
+            "missing": {
+              "type": "string",
+              "enum": [
+                "error",
+                "empty",
+                "null",
+                "undefined"
+              ]
+            },
+            "default": {
+              "type": [
+                "string",
+                "number",
+                "boolean",
+                "object",
+                "array",
+                "null"
+              ]
+            }
+          },
+          "additionalProperties": true
+        },
+        "store_as": {
+          "type": [
+            "string",
+            "object"
+          ]
+        },
+        "store_scope": {
+          "type": "string",
+          "enum": [
+            "session",
+            "persistent"
+          ]
+        },
+        "trace_id": {
+          "type": "string"
+        },
+        "span_id": {
+          "type": "string"
+        },
+        "parent_span_id": {
+          "type": "string"
+        },
+        "preset": {
+          "type": "string"
+        },
+        "preset_name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "mcp_repo",
+    "description": "Safe-by-default repo runner: sandboxed git/render/diff/patch with allowlisted exec (no shell).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "repo_info",
+            "assert_clean",
+            "git_diff",
+            "render",
+            "apply_patch",
+            "git_commit",
+            "git_revert",
+            "git_push",
+            "exec"
+          ]
+        },
+        "project": {
+          "type": "string"
+        },
+        "project_name": {
+          "type": "string"
+        },
+        "target": {
+          "type": "string"
+        },
+        "project_target": {
+          "type": "string"
+        },
+        "environment": {
+          "type": "string"
+        },
+        "repo_root": {
+          "type": "string"
+        },
+        "cwd": {
+          "type": "string"
+        },
+        "apply": {
+          "type": "boolean"
+        },
+        "command": {
+          "type": "string"
+        },
+        "args": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "env": {
+          "type": "object"
+        },
+        "stdin": {
+          "type": "string"
+        },
+        "timeout_ms": {
+          "type": "integer"
+        },
+        "inline": {
+          "type": "boolean"
+        },
+        "max_bytes": {
+          "type": "integer"
+        },
+        "patch": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        },
+        "remote": {
+          "type": "string"
+        },
+        "branch": {
+          "type": "string"
+        },
+        "sha": {
+          "type": "string"
+        },
+        "mainline": {
+          "type": "integer"
+        },
+        "render_type": {
+          "type": "string",
+          "enum": [
+            "plain",
+            "kustomize",
+            "helm"
+          ]
+        },
+        "overlay": {
+          "type": "string"
+        },
+        "chart": {
+          "type": "string"
+        },
+        "values": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "output": {
+          "type": "object",
+          "description": "Output shaping (path/pick/omit/map).",
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "pick": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "omit": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "map": {
+              "type": "object"
+            },
+            "missing": {
+              "type": "string",
+              "enum": [
+                "error",
+                "empty",
+                "null",
+                "undefined"
+              ]
+            },
+            "default": {
+              "type": [
+                "string",
+                "number",
+                "boolean",
+                "object",
+                "array",
+                "null"
+              ]
+            }
+          },
+          "additionalProperties": true
+        },
+        "store_as": {
+          "type": [
+            "string",
+            "object"
+          ]
+        },
+        "store_scope": {
+          "type": "string",
+          "enum": [
+            "session",
+            "persistent"
+          ]
+        },
+        "trace_id": {
+          "type": "string"
+        },
+        "span_id": {
+          "type": "string"
+        },
+        "parent_span_id": {
+          "type": "string"
+        },
+        "preset": {
+          "type": "string"
+        },
+        "preset_name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "mcp_psql_manager",
+    "description": "PostgreSQL toolchain. Profile actions + query/batch/transaction + CRUD + select/count/exists/export helpers.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "profile_upsert",
+            "profile_get",
+            "profile_list",
+            "profile_delete",
+            "profile_test",
+            "query",
+            "batch",
+            "transaction",
+            "insert",
+            "insert_bulk",
+            "update",
+            "delete",
+            "select",
+            "count",
+            "exists",
+            "export",
+            "catalog_tables",
+            "catalog_columns",
+            "database_info"
+          ]
+        },
+        "profile_name": {
+          "type": "string"
+        },
+        "include_secrets": {
+          "type": "boolean"
+        },
+        "connection": {
+          "type": "object"
+        },
+        "connection_url": {
+          "type": "string"
+        },
+        "project": {
+          "type": "string"
+        },
+        "project_name": {
+          "type": "string"
+        },
+        "target": {
+          "type": "string"
+        },
+        "project_target": {
+          "type": "string"
+        },
+        "environment": {
+          "type": "string"
+        },
+        "vault_profile_name": {
+          "type": "string"
+        },
+        "vault_profile": {
+          "type": "string"
+        },
+        "pool": {
+          "type": "object"
+        },
+        "options": {
+          "type": "object"
+        },
+        "sql": {
+          "type": "string"
+        },
+        "params": {
+          "type": "array",
+          "items": {
+            "type": [
+              "string",
+              "number",
+              "boolean",
+              "null"
+            ]
+          }
+        },
+        "mode": {
+          "type": "string",
+          "enum": [
+            "rows",
+            "row",
+            "value",
+            "command"
+          ]
+        },
+        "timeout_ms": {
+          "type": "integer"
+        },
+        "statements": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "transactional": {
+          "type": "boolean"
+        },
+        "table": {
+          "type": "string"
+        },
+        "schema": {
+          "type": "string"
+        },
+        "columns": {
+          "type": [
+            "array",
+            "string"
+          ]
+        },
+        "columns_sql": {
+          "type": "string"
+        },
+        "order_by": {
+          "type": [
+            "array",
+            "object",
+            "string"
+          ]
+        },
+        "order_by_sql": {
+          "type": "string"
+        },
+        "limit": {
+          "type": "integer"
+        },
+        "offset": {
+          "type": "integer"
+        },
+        "data": {
+          "type": "object"
+        },
+        "rows": {
+          "type": "array"
+        },
+        "filters": {
+          "type": [
+            "object",
+            "array"
+          ]
+        },
+        "where_sql": {
+          "type": "string"
+        },
+        "where_params": {
+          "type": "array",
+          "items": {
+            "type": [
+              "string",
+              "number",
+              "boolean",
+              "null"
+            ]
+          }
+        },
+        "returning": {
+          "type": [
+            "boolean",
+            "array",
+            "string"
+          ]
+        },
+        "file_path": {
+          "type": "string"
+        },
+        "overwrite": {
+          "type": "boolean"
+        },
+        "format": {
+          "type": "string",
+          "enum": [
+            "csv",
+            "jsonl"
+          ]
+        },
+        "batch_size": {
+          "type": "integer"
+        },
+        "output": {
+          "type": "object",
+          "description": "Output shaping (path/pick/omit/map).",
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "pick": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "omit": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "map": {
+              "type": "object"
+            },
+            "missing": {
+              "type": "string",
+              "enum": [
+                "error",
+                "empty",
+                "null",
+                "undefined"
+              ]
+            },
+            "default": {
+              "type": [
+                "string",
+                "number",
+                "boolean",
+                "object",
+                "array",
+                "null"
+              ]
+            }
+          },
+          "additionalProperties": true
+        },
+        "store_as": {
+          "type": [
+            "string",
+            "object"
+          ]
+        },
+        "store_scope": {
+          "type": "string",
+          "enum": [
+            "session",
+            "persistent"
+          ]
+        },
+        "trace_id": {
+          "type": "string"
+        },
+        "span_id": {
+          "type": "string"
+        },
+        "parent_span_id": {
+          "type": "string"
+        },
+        "preset": {
+          "type": "string"
+        },
+        "preset_name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "mcp_ssh_manager",
+    "description": "SSH executor with profiles, exec/batch diagnostics, and SFTP helpers.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "profile_upsert",
+            "profile_get",
+            "profile_list",
+            "profile_delete",
+            "profile_test",
+            "authorized_keys_add",
+            "exec",
+            "exec_detached",
+            "exec_follow",
+            "deploy_file",
+            "job_status",
+            "job_wait",
+            "job_logs_tail",
+            "tail_job",
+            "follow_job",
+            "job_kill",
+            "job_forget",
+            "batch",
+            "system_info",
+            "check_host",
+            "sftp_list",
+            "sftp_exists",
+            "sftp_upload",
+            "sftp_download"
+          ]
+        },
+        "profile_name": {
+          "type": "string"
+        },
+        "include_secrets": {
+          "type": "boolean"
+        },
+        "connection": {
+          "type": "object"
+        },
+        "project": {
+          "type": "string"
+        },
+        "project_name": {
+          "type": "string"
+        },
+        "target": {
+          "type": "string"
+        },
+        "project_target": {
+          "type": "string"
+        },
+        "environment": {
+          "type": "string"
+        },
+        "vault_profile_name": {
+          "type": "string"
+        },
+        "vault_profile": {
+          "type": "string"
+        },
+        "host_key_policy": {
+          "type": "string",
+          "enum": [
+            "accept",
+            "tofu",
+            "pin"
+          ]
+        },
+        "host_key_fingerprint_sha256": {
+          "type": "string"
+        },
+        "public_key": {
+          "type": "string"
+        },
+        "public_key_path": {
+          "type": "string"
+        },
+        "authorized_keys_path": {
+          "type": "string"
+        },
+        "command": {
+          "type": "string"
+        },
+        "restart": {
+          "type": "string"
+        },
+        "restart_command": {
+          "type": "string"
+        },
+        "cwd": {
+          "type": "string"
+        },
+        "env": {
+          "type": "object"
+        },
+        "stdin": {
+          "type": "string"
+        },
+        "job_id": {
+          "type": "string"
+        },
+        "pid": {
+          "type": "integer"
+        },
+        "log_path": {
+          "type": "string"
+        },
+        "pid_path": {
+          "type": "string"
+        },
+        "exit_path": {
+          "type": "string"
+        },
+        "signal": {
+          "type": "string"
+        },
+        "lines": {
+          "type": "integer"
+        },
+        "poll_interval_ms": {
+          "type": "integer"
+        },
+        "timeout_ms": {
+          "type": "integer"
+        },
+        "start_timeout_ms": {
+          "type": "integer"
+        },
+        "pty": {
+          "type": [
+            "boolean",
+            "object"
+          ]
+        },
+        "commands": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "parallel": {
+          "type": "boolean"
+        },
+        "stop_on_error": {
+          "type": "boolean"
+        },
+        "path": {
+          "type": "string"
+        },
+        "remote_path": {
+          "type": "string"
+        },
+        "local_path": {
+          "type": "string"
+        },
+        "recursive": {
+          "type": "boolean"
+        },
+        "max_depth": {
+          "type": "integer"
+        },
+        "overwrite": {
+          "type": "boolean"
+        },
+        "mkdirs": {
+          "type": "boolean"
+        },
+        "preserve_mtime": {
+          "type": "boolean"
+        },
+        "output": {
+          "type": "object",
+          "description": "Output shaping (path/pick/omit/map).",
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "pick": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "omit": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "map": {
+              "type": "object"
+            },
+            "missing": {
+              "type": "string",
+              "enum": [
+                "error",
+                "empty",
+                "null",
+                "undefined"
+              ]
+            },
+            "default": {
+              "type": [
+                "string",
+                "number",
+                "boolean",
+                "object",
+                "array",
+                "null"
+              ]
+            }
+          },
+          "additionalProperties": true
+        },
+        "store_as": {
+          "type": [
+            "string",
+            "object"
+          ]
+        },
+        "store_scope": {
+          "type": "string",
+          "enum": [
+            "session",
+            "persistent"
+          ]
+        },
+        "trace_id": {
+          "type": "string"
+        },
+        "span_id": {
+          "type": "string"
+        },
+        "parent_span_id": {
+          "type": "string"
+        },
+        "preset": {
+          "type": "string"
+        },
+        "preset_name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "mcp_api_client",
+    "description": "HTTP client with profiles, auth providers, retry/backoff, pagination, and downloads.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "profile_upsert",
+            "profile_get",
+            "profile_list",
+            "profile_delete",
+            "request",
+            "paginate",
+            "download",
+            "check",
+            "smoke_http"
+          ]
+        },
+        "profile_name": {
+          "type": "string"
+        },
+        "include_secrets": {
+          "type": "boolean"
+        },
+        "project": {
+          "type": "string"
+        },
+        "project_name": {
+          "type": "string"
+        },
+        "target": {
+          "type": "string"
+        },
+        "project_target": {
+          "type": "string"
+        },
+        "environment": {
+          "type": "string"
+        },
+        "vault_profile_name": {
+          "type": "string"
+        },
+        "vault_profile": {
+          "type": "string"
+        },
+        "base_url": {
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "query": {
+          "type": [
+            "object",
+            "string"
+          ]
+        },
+        "method": {
+          "type": "string"
+        },
+        "headers": {
+          "type": "object"
+        },
+        "auth": {
+          "type": [
+            "string",
+            "object"
+          ]
+        },
+        "auth_provider": {
+          "type": "object"
+        },
+        "body": {
+          "type": [
+            "object",
+            "string",
+            "number",
+            "boolean",
+            "null"
+          ]
+        },
+        "data": {
+          "type": [
+            "object",
+            "string",
+            "number",
+            "boolean",
+            "null"
+          ]
+        },
+        "body_type": {
+          "type": "string"
+        },
+        "body_base64": {
+          "type": "string"
+        },
+        "form": {
+          "type": "object"
+        },
+        "expect_code": {
+          "type": "integer"
+        },
+        "follow_redirects": {
+          "type": "boolean"
+        },
+        "insecure_ok": {
+          "type": "boolean"
+        },
+        "max_bytes": {
+          "type": "integer"
+        },
+        "timeout_ms": {
+          "type": "integer"
+        },
+        "response_type": {
+          "type": "string"
+        },
+        "redirect": {
+          "type": "string"
+        },
+        "retry": {
+          "type": "object"
+        },
+        "pagination": {
+          "type": "object"
+        },
+        "cache": {
+          "type": [
+            "boolean",
+            "object"
+          ]
+        },
+        "download_path": {
+          "type": "string"
+        },
+        "overwrite": {
+          "type": "boolean"
+        },
+        "output": {
+          "type": "object",
+          "description": "Output shaping (path/pick/omit/map).",
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "pick": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "omit": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "map": {
+              "type": "object"
+            },
+            "missing": {
+              "type": "string",
+              "enum": [
+                "error",
+                "empty",
+                "null",
+                "undefined"
+              ]
+            },
+            "default": {
+              "type": [
+                "string",
+                "number",
+                "boolean",
+                "object",
+                "array",
+                "null"
+              ]
+            }
+          },
+          "additionalProperties": true
+        },
+        "store_as": {
+          "type": [
+            "string",
+            "object"
+          ]
+        },
+        "store_scope": {
+          "type": "string",
+          "enum": [
+            "session",
+            "persistent"
+          ]
+        },
+        "trace_id": {
+          "type": "string"
+        },
+        "span_id": {
+          "type": "string"
+        },
+        "parent_span_id": {
+          "type": "string"
+        },
+        "preset": {
+          "type": "string"
+        },
+        "preset_name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "sql",
+    "description": "Alias for mcp_psql_manager.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "profile_upsert",
+            "profile_get",
+            "profile_list",
+            "profile_delete",
+            "profile_test",
+            "query",
+            "batch",
+            "transaction",
+            "insert",
+            "insert_bulk",
+            "update",
+            "delete",
+            "select",
+            "count",
+            "exists",
+            "export",
+            "catalog_tables",
+            "catalog_columns",
+            "database_info"
+          ]
+        },
+        "profile_name": {
+          "type": "string"
+        },
+        "include_secrets": {
+          "type": "boolean"
+        },
+        "connection": {
+          "type": "object"
+        },
+        "connection_url": {
+          "type": "string"
+        },
+        "project": {
+          "type": "string"
+        },
+        "project_name": {
+          "type": "string"
+        },
+        "target": {
+          "type": "string"
+        },
+        "project_target": {
+          "type": "string"
+        },
+        "environment": {
+          "type": "string"
+        },
+        "vault_profile_name": {
+          "type": "string"
+        },
+        "vault_profile": {
+          "type": "string"
+        },
+        "pool": {
+          "type": "object"
+        },
+        "options": {
+          "type": "object"
+        },
+        "sql": {
+          "type": "string"
+        },
+        "params": {
+          "type": "array",
+          "items": {
+            "type": [
+              "string",
+              "number",
+              "boolean",
+              "null"
+            ]
+          }
+        },
+        "mode": {
+          "type": "string",
+          "enum": [
+            "rows",
+            "row",
+            "value",
+            "command"
+          ]
+        },
+        "timeout_ms": {
+          "type": "integer"
+        },
+        "statements": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "transactional": {
+          "type": "boolean"
+        },
+        "table": {
+          "type": "string"
+        },
+        "schema": {
+          "type": "string"
+        },
+        "columns": {
+          "type": [
+            "array",
+            "string"
+          ]
+        },
+        "columns_sql": {
+          "type": "string"
+        },
+        "order_by": {
+          "type": [
+            "array",
+            "object",
+            "string"
+          ]
+        },
+        "order_by_sql": {
+          "type": "string"
+        },
+        "limit": {
+          "type": "integer"
+        },
+        "offset": {
+          "type": "integer"
+        },
+        "data": {
+          "type": "object"
+        },
+        "rows": {
+          "type": "array"
+        },
+        "filters": {
+          "type": [
+            "object",
+            "array"
+          ]
+        },
+        "where_sql": {
+          "type": "string"
+        },
+        "where_params": {
+          "type": "array",
+          "items": {
+            "type": [
+              "string",
+              "number",
+              "boolean",
+              "null"
+            ]
+          }
+        },
+        "returning": {
+          "type": [
+            "boolean",
+            "array",
+            "string"
+          ]
+        },
+        "file_path": {
+          "type": "string"
+        },
+        "overwrite": {
+          "type": "boolean"
+        },
+        "format": {
+          "type": "string",
+          "enum": [
+            "csv",
+            "jsonl"
+          ]
+        },
+        "batch_size": {
+          "type": "integer"
+        },
+        "output": {
+          "type": "object",
+          "description": "Output shaping (path/pick/omit/map).",
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "pick": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "omit": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "map": {
+              "type": "object"
+            },
+            "missing": {
+              "type": "string",
+              "enum": [
+                "error",
+                "empty",
+                "null",
+                "undefined"
+              ]
+            },
+            "default": {
+              "type": [
+                "string",
+                "number",
+                "boolean",
+                "object",
+                "array",
+                "null"
+              ]
+            }
+          },
+          "additionalProperties": true
+        },
+        "store_as": {
+          "type": [
+            "string",
+            "object"
+          ]
+        },
+        "store_scope": {
+          "type": "string",
+          "enum": [
+            "session",
+            "persistent"
+          ]
+        },
+        "trace_id": {
+          "type": "string"
+        },
+        "span_id": {
+          "type": "string"
+        },
+        "parent_span_id": {
+          "type": "string"
+        },
+        "preset": {
+          "type": "string"
+        },
+        "preset_name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "psql",
+    "description": "Alias for mcp_psql_manager.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "profile_upsert",
+            "profile_get",
+            "profile_list",
+            "profile_delete",
+            "profile_test",
+            "query",
+            "batch",
+            "transaction",
+            "insert",
+            "insert_bulk",
+            "update",
+            "delete",
+            "select",
+            "count",
+            "exists",
+            "export",
+            "catalog_tables",
+            "catalog_columns",
+            "database_info"
+          ]
+        },
+        "profile_name": {
+          "type": "string"
+        },
+        "include_secrets": {
+          "type": "boolean"
+        },
+        "connection": {
+          "type": "object"
+        },
+        "connection_url": {
+          "type": "string"
+        },
+        "project": {
+          "type": "string"
+        },
+        "project_name": {
+          "type": "string"
+        },
+        "target": {
+          "type": "string"
+        },
+        "project_target": {
+          "type": "string"
+        },
+        "environment": {
+          "type": "string"
+        },
+        "vault_profile_name": {
+          "type": "string"
+        },
+        "vault_profile": {
+          "type": "string"
+        },
+        "pool": {
+          "type": "object"
+        },
+        "options": {
+          "type": "object"
+        },
+        "sql": {
+          "type": "string"
+        },
+        "params": {
+          "type": "array",
+          "items": {
+            "type": [
+              "string",
+              "number",
+              "boolean",
+              "null"
+            ]
+          }
+        },
+        "mode": {
+          "type": "string",
+          "enum": [
+            "rows",
+            "row",
+            "value",
+            "command"
+          ]
+        },
+        "timeout_ms": {
+          "type": "integer"
+        },
+        "statements": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "transactional": {
+          "type": "boolean"
+        },
+        "table": {
+          "type": "string"
+        },
+        "schema": {
+          "type": "string"
+        },
+        "columns": {
+          "type": [
+            "array",
+            "string"
+          ]
+        },
+        "columns_sql": {
+          "type": "string"
+        },
+        "order_by": {
+          "type": [
+            "array",
+            "object",
+            "string"
+          ]
+        },
+        "order_by_sql": {
+          "type": "string"
+        },
+        "limit": {
+          "type": "integer"
+        },
+        "offset": {
+          "type": "integer"
+        },
+        "data": {
+          "type": "object"
+        },
+        "rows": {
+          "type": "array"
+        },
+        "filters": {
+          "type": [
+            "object",
+            "array"
+          ]
+        },
+        "where_sql": {
+          "type": "string"
+        },
+        "where_params": {
+          "type": "array",
+          "items": {
+            "type": [
+              "string",
+              "number",
+              "boolean",
+              "null"
+            ]
+          }
+        },
+        "returning": {
+          "type": [
+            "boolean",
+            "array",
+            "string"
+          ]
+        },
+        "file_path": {
+          "type": "string"
+        },
+        "overwrite": {
+          "type": "boolean"
+        },
+        "format": {
+          "type": "string",
+          "enum": [
+            "csv",
+            "jsonl"
+          ]
+        },
+        "batch_size": {
+          "type": "integer"
+        },
+        "output": {
+          "type": "object",
+          "description": "Output shaping (path/pick/omit/map).",
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "pick": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "omit": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "map": {
+              "type": "object"
+            },
+            "missing": {
+              "type": "string",
+              "enum": [
+                "error",
+                "empty",
+                "null",
+                "undefined"
+              ]
+            },
+            "default": {
+              "type": [
+                "string",
+                "number",
+                "boolean",
+                "object",
+                "array",
+                "null"
+              ]
+            }
+          },
+          "additionalProperties": true
+        },
+        "store_as": {
+          "type": [
+            "string",
+            "object"
+          ]
+        },
+        "store_scope": {
+          "type": "string",
+          "enum": [
+            "session",
+            "persistent"
+          ]
+        },
+        "trace_id": {
+          "type": "string"
+        },
+        "span_id": {
+          "type": "string"
+        },
+        "parent_span_id": {
+          "type": "string"
+        },
+        "preset": {
+          "type": "string"
+        },
+        "preset_name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "ssh",
+    "description": "Alias for mcp_ssh_manager.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "profile_upsert",
+            "profile_get",
+            "profile_list",
+            "profile_delete",
+            "profile_test",
+            "authorized_keys_add",
+            "exec",
+            "exec_detached",
+            "exec_follow",
+            "deploy_file",
+            "job_status",
+            "job_wait",
+            "job_logs_tail",
+            "tail_job",
+            "follow_job",
+            "job_kill",
+            "job_forget",
+            "batch",
+            "system_info",
+            "check_host",
+            "sftp_list",
+            "sftp_exists",
+            "sftp_upload",
+            "sftp_download"
+          ]
+        },
+        "profile_name": {
+          "type": "string"
+        },
+        "include_secrets": {
+          "type": "boolean"
+        },
+        "connection": {
+          "type": "object"
+        },
+        "project": {
+          "type": "string"
+        },
+        "project_name": {
+          "type": "string"
+        },
+        "target": {
+          "type": "string"
+        },
+        "project_target": {
+          "type": "string"
+        },
+        "environment": {
+          "type": "string"
+        },
+        "vault_profile_name": {
+          "type": "string"
+        },
+        "vault_profile": {
+          "type": "string"
+        },
+        "host_key_policy": {
+          "type": "string",
+          "enum": [
+            "accept",
+            "tofu",
+            "pin"
+          ]
+        },
+        "host_key_fingerprint_sha256": {
+          "type": "string"
+        },
+        "public_key": {
+          "type": "string"
+        },
+        "public_key_path": {
+          "type": "string"
+        },
+        "authorized_keys_path": {
+          "type": "string"
+        },
+        "command": {
+          "type": "string"
+        },
+        "restart": {
+          "type": "string"
+        },
+        "restart_command": {
+          "type": "string"
+        },
+        "cwd": {
+          "type": "string"
+        },
+        "env": {
+          "type": "object"
+        },
+        "stdin": {
+          "type": "string"
+        },
+        "job_id": {
+          "type": "string"
+        },
+        "pid": {
+          "type": "integer"
+        },
+        "log_path": {
+          "type": "string"
+        },
+        "pid_path": {
+          "type": "string"
+        },
+        "exit_path": {
+          "type": "string"
+        },
+        "signal": {
+          "type": "string"
+        },
+        "lines": {
+          "type": "integer"
+        },
+        "poll_interval_ms": {
+          "type": "integer"
+        },
+        "timeout_ms": {
+          "type": "integer"
+        },
+        "start_timeout_ms": {
+          "type": "integer"
+        },
+        "pty": {
+          "type": [
+            "boolean",
+            "object"
+          ]
+        },
+        "commands": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "parallel": {
+          "type": "boolean"
+        },
+        "stop_on_error": {
+          "type": "boolean"
+        },
+        "path": {
+          "type": "string"
+        },
+        "remote_path": {
+          "type": "string"
+        },
+        "local_path": {
+          "type": "string"
+        },
+        "recursive": {
+          "type": "boolean"
+        },
+        "max_depth": {
+          "type": "integer"
+        },
+        "overwrite": {
+          "type": "boolean"
+        },
+        "mkdirs": {
+          "type": "boolean"
+        },
+        "preserve_mtime": {
+          "type": "boolean"
+        },
+        "output": {
+          "type": "object",
+          "description": "Output shaping (path/pick/omit/map).",
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "pick": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "omit": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "map": {
+              "type": "object"
+            },
+            "missing": {
+              "type": "string",
+              "enum": [
+                "error",
+                "empty",
+                "null",
+                "undefined"
+              ]
+            },
+            "default": {
+              "type": [
+                "string",
+                "number",
+                "boolean",
+                "object",
+                "array",
+                "null"
+              ]
+            }
+          },
+          "additionalProperties": true
+        },
+        "store_as": {
+          "type": [
+            "string",
+            "object"
+          ]
+        },
+        "store_scope": {
+          "type": "string",
+          "enum": [
+            "session",
+            "persistent"
+          ]
+        },
+        "trace_id": {
+          "type": "string"
+        },
+        "span_id": {
+          "type": "string"
+        },
+        "parent_span_id": {
+          "type": "string"
+        },
+        "preset": {
+          "type": "string"
+        },
+        "preset_name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "job",
+    "description": "Alias for mcp_jobs.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "job_status",
+            "job_wait",
+            "job_logs_tail",
+            "tail_job",
+            "follow_job",
+            "job_cancel",
+            "job_forget",
+            "job_list"
+          ]
+        },
+        "job_id": {
+          "type": "string"
+        },
+        "timeout_ms": {
+          "type": "integer"
+        },
+        "poll_interval_ms": {
+          "type": "integer"
+        },
+        "lines": {
+          "type": "integer"
+        },
+        "signal": {
+          "type": "string"
+        },
+        "limit": {
+          "type": "integer"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "queued",
+            "running",
+            "succeeded",
+            "failed",
+            "canceled"
+          ]
+        },
+        "output": {
+          "type": "object",
+          "description": "Output shaping (path/pick/omit/map).",
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "pick": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "omit": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "map": {
+              "type": "object"
+            },
+            "missing": {
+              "type": "string",
+              "enum": [
+                "error",
+                "empty",
+                "null",
+                "undefined"
+              ]
+            },
+            "default": {
+              "type": [
+                "string",
+                "number",
+                "boolean",
+                "object",
+                "array",
+                "null"
+              ]
+            }
+          },
+          "additionalProperties": true
+        },
+        "store_as": {
+          "type": [
+            "string",
+            "object"
+          ]
+        },
+        "store_scope": {
+          "type": "string",
+          "enum": [
+            "session",
+            "persistent"
+          ]
+        },
+        "trace_id": {
+          "type": "string"
+        },
+        "span_id": {
+          "type": "string"
+        },
+        "parent_span_id": {
+          "type": "string"
+        },
+        "preset": {
+          "type": "string"
+        },
+        "preset_name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "artifacts",
+    "description": "Alias for mcp_artifacts.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "get",
+            "head",
+            "tail",
+            "list"
+          ]
+        },
+        "uri": {
+          "type": "string"
+        },
+        "rel": {
+          "type": "string"
+        },
+        "prefix": {
+          "type": "string"
+        },
+        "encoding": {
+          "type": "string",
+          "enum": [
+            "utf8",
+            "base64"
+          ]
+        },
+        "include_secrets": {
+          "type": "boolean"
+        },
+        "offset": {
+          "type": "integer"
+        },
+        "max_bytes": {
+          "type": "integer"
+        },
+        "limit": {
+          "type": "integer"
+        },
+        "output": {
+          "type": "object",
+          "description": "Output shaping (path/pick/omit/map).",
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "pick": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "omit": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "map": {
+              "type": "object"
+            },
+            "missing": {
+              "type": "string",
+              "enum": [
+                "error",
+                "empty",
+                "null",
+                "undefined"
+              ]
+            },
+            "default": {
+              "type": [
+                "string",
+                "number",
+                "boolean",
+                "object",
+                "array",
+                "null"
+              ]
+            }
+          },
+          "additionalProperties": true
+        },
+        "store_as": {
+          "type": [
+            "string",
+            "object"
+          ]
+        },
+        "store_scope": {
+          "type": "string",
+          "enum": [
+            "session",
+            "persistent"
+          ]
+        },
+        "trace_id": {
+          "type": "string"
+        },
+        "span_id": {
+          "type": "string"
+        },
+        "parent_span_id": {
+          "type": "string"
+        },
+        "preset": {
+          "type": "string"
+        },
+        "preset_name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "http",
+    "description": "Alias for mcp_api_client.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "profile_upsert",
+            "profile_get",
+            "profile_list",
+            "profile_delete",
+            "request",
+            "paginate",
+            "download",
+            "check",
+            "smoke_http"
+          ]
+        },
+        "profile_name": {
+          "type": "string"
+        },
+        "include_secrets": {
+          "type": "boolean"
+        },
+        "project": {
+          "type": "string"
+        },
+        "project_name": {
+          "type": "string"
+        },
+        "target": {
+          "type": "string"
+        },
+        "project_target": {
+          "type": "string"
+        },
+        "environment": {
+          "type": "string"
+        },
+        "vault_profile_name": {
+          "type": "string"
+        },
+        "vault_profile": {
+          "type": "string"
+        },
+        "base_url": {
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "query": {
+          "type": [
+            "object",
+            "string"
+          ]
+        },
+        "method": {
+          "type": "string"
+        },
+        "headers": {
+          "type": "object"
+        },
+        "auth": {
+          "type": [
+            "string",
+            "object"
+          ]
+        },
+        "auth_provider": {
+          "type": "object"
+        },
+        "body": {
+          "type": [
+            "object",
+            "string",
+            "number",
+            "boolean",
+            "null"
+          ]
+        },
+        "data": {
+          "type": [
+            "object",
+            "string",
+            "number",
+            "boolean",
+            "null"
+          ]
+        },
+        "body_type": {
+          "type": "string"
+        },
+        "body_base64": {
+          "type": "string"
+        },
+        "form": {
+          "type": "object"
+        },
+        "expect_code": {
+          "type": "integer"
+        },
+        "follow_redirects": {
+          "type": "boolean"
+        },
+        "insecure_ok": {
+          "type": "boolean"
+        },
+        "max_bytes": {
+          "type": "integer"
+        },
+        "timeout_ms": {
+          "type": "integer"
+        },
+        "response_type": {
+          "type": "string"
+        },
+        "redirect": {
+          "type": "string"
+        },
+        "retry": {
+          "type": "object"
+        },
+        "pagination": {
+          "type": "object"
+        },
+        "cache": {
+          "type": [
+            "boolean",
+            "object"
+          ]
+        },
+        "download_path": {
+          "type": "string"
+        },
+        "overwrite": {
+          "type": "boolean"
+        },
+        "output": {
+          "type": "object",
+          "description": "Output shaping (path/pick/omit/map).",
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "pick": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "omit": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "map": {
+              "type": "object"
+            },
+            "missing": {
+              "type": "string",
+              "enum": [
+                "error",
+                "empty",
+                "null",
+                "undefined"
+              ]
+            },
+            "default": {
+              "type": [
+                "string",
+                "number",
+                "boolean",
+                "object",
+                "array",
+                "null"
+              ]
+            }
+          },
+          "additionalProperties": true
+        },
+        "store_as": {
+          "type": [
+            "string",
+            "object"
+          ]
+        },
+        "store_scope": {
+          "type": "string",
+          "enum": [
+            "session",
+            "persistent"
+          ]
+        },
+        "trace_id": {
+          "type": "string"
+        },
+        "span_id": {
+          "type": "string"
+        },
+        "parent_span_id": {
+          "type": "string"
+        },
+        "preset": {
+          "type": "string"
+        },
+        "preset_name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "api",
+    "description": "Alias for mcp_api_client.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "profile_upsert",
+            "profile_get",
+            "profile_list",
+            "profile_delete",
+            "request",
+            "paginate",
+            "download",
+            "check",
+            "smoke_http"
+          ]
+        },
+        "profile_name": {
+          "type": "string"
+        },
+        "include_secrets": {
+          "type": "boolean"
+        },
+        "project": {
+          "type": "string"
+        },
+        "project_name": {
+          "type": "string"
+        },
+        "target": {
+          "type": "string"
+        },
+        "project_target": {
+          "type": "string"
+        },
+        "environment": {
+          "type": "string"
+        },
+        "vault_profile_name": {
+          "type": "string"
+        },
+        "vault_profile": {
+          "type": "string"
+        },
+        "base_url": {
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "query": {
+          "type": [
+            "object",
+            "string"
+          ]
+        },
+        "method": {
+          "type": "string"
+        },
+        "headers": {
+          "type": "object"
+        },
+        "auth": {
+          "type": [
+            "string",
+            "object"
+          ]
+        },
+        "auth_provider": {
+          "type": "object"
+        },
+        "body": {
+          "type": [
+            "object",
+            "string",
+            "number",
+            "boolean",
+            "null"
+          ]
+        },
+        "data": {
+          "type": [
+            "object",
+            "string",
+            "number",
+            "boolean",
+            "null"
+          ]
+        },
+        "body_type": {
+          "type": "string"
+        },
+        "body_base64": {
+          "type": "string"
+        },
+        "form": {
+          "type": "object"
+        },
+        "expect_code": {
+          "type": "integer"
+        },
+        "follow_redirects": {
+          "type": "boolean"
+        },
+        "insecure_ok": {
+          "type": "boolean"
+        },
+        "max_bytes": {
+          "type": "integer"
+        },
+        "timeout_ms": {
+          "type": "integer"
+        },
+        "response_type": {
+          "type": "string"
+        },
+        "redirect": {
+          "type": "string"
+        },
+        "retry": {
+          "type": "object"
+        },
+        "pagination": {
+          "type": "object"
+        },
+        "cache": {
+          "type": [
+            "boolean",
+            "object"
+          ]
+        },
+        "download_path": {
+          "type": "string"
+        },
+        "overwrite": {
+          "type": "boolean"
+        },
+        "output": {
+          "type": "object",
+          "description": "Output shaping (path/pick/omit/map).",
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "pick": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "omit": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "map": {
+              "type": "object"
+            },
+            "missing": {
+              "type": "string",
+              "enum": [
+                "error",
+                "empty",
+                "null",
+                "undefined"
+              ]
+            },
+            "default": {
+              "type": [
+                "string",
+                "number",
+                "boolean",
+                "object",
+                "array",
+                "null"
+              ]
+            }
+          },
+          "additionalProperties": true
+        },
+        "store_as": {
+          "type": [
+            "string",
+            "object"
+          ]
+        },
+        "store_scope": {
+          "type": "string",
+          "enum": [
+            "session",
+            "persistent"
+          ]
+        },
+        "trace_id": {
+          "type": "string"
+        },
+        "span_id": {
+          "type": "string"
+        },
+        "parent_span_id": {
+          "type": "string"
+        },
+        "preset": {
+          "type": "string"
+        },
+        "preset_name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "repo",
+    "description": "Alias for mcp_repo.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "repo_info",
+            "assert_clean",
+            "git_diff",
+            "render",
+            "apply_patch",
+            "git_commit",
+            "git_revert",
+            "git_push",
+            "exec"
+          ]
+        },
+        "project": {
+          "type": "string"
+        },
+        "project_name": {
+          "type": "string"
+        },
+        "target": {
+          "type": "string"
+        },
+        "project_target": {
+          "type": "string"
+        },
+        "environment": {
+          "type": "string"
+        },
+        "repo_root": {
+          "type": "string"
+        },
+        "cwd": {
+          "type": "string"
+        },
+        "apply": {
+          "type": "boolean"
+        },
+        "command": {
+          "type": "string"
+        },
+        "args": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "env": {
+          "type": "object"
+        },
+        "stdin": {
+          "type": "string"
+        },
+        "timeout_ms": {
+          "type": "integer"
+        },
+        "inline": {
+          "type": "boolean"
+        },
+        "max_bytes": {
+          "type": "integer"
+        },
+        "patch": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        },
+        "remote": {
+          "type": "string"
+        },
+        "branch": {
+          "type": "string"
+        },
+        "sha": {
+          "type": "string"
+        },
+        "mainline": {
+          "type": "integer"
+        },
+        "render_type": {
+          "type": "string",
+          "enum": [
+            "plain",
+            "kustomize",
+            "helm"
+          ]
+        },
+        "overlay": {
+          "type": "string"
+        },
+        "chart": {
+          "type": "string"
+        },
+        "values": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "output": {
+          "type": "object",
+          "description": "Output shaping (path/pick/omit/map).",
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "pick": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "omit": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "map": {
+              "type": "object"
+            },
+            "missing": {
+              "type": "string",
+              "enum": [
+                "error",
+                "empty",
+                "null",
+                "undefined"
+              ]
+            },
+            "default": {
+              "type": [
+                "string",
+                "number",
+                "boolean",
+                "object",
+                "array",
+                "null"
+              ]
+            }
+          },
+          "additionalProperties": true
+        },
+        "store_as": {
+          "type": [
+            "string",
+            "object"
+          ]
+        },
+        "store_scope": {
+          "type": "string",
+          "enum": [
+            "session",
+            "persistent"
+          ]
+        },
+        "trace_id": {
+          "type": "string"
+        },
+        "span_id": {
+          "type": "string"
+        },
+        "parent_span_id": {
+          "type": "string"
+        },
+        "preset": {
+          "type": "string"
+        },
+        "preset_name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "state",
+    "description": "Alias for mcp_state.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "set",
+            "get",
+            "list",
+            "unset",
+            "clear",
+            "dump"
+          ]
+        },
+        "key": {
+          "type": "string"
+        },
+        "value": {},
+        "scope": {
+          "type": "string",
+          "enum": [
+            "session",
+            "persistent",
+            "any"
+          ]
+        },
+        "prefix": {
+          "type": "string"
+        },
+        "include_values": {
+          "type": "boolean"
+        },
+        "output": {
+          "type": "object",
+          "description": "Output shaping (path/pick/omit/map).",
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "pick": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "omit": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "map": {
+              "type": "object"
+            },
+            "missing": {
+              "type": "string",
+              "enum": [
+                "error",
+                "empty",
+                "null",
+                "undefined"
+              ]
+            },
+            "default": {
+              "type": [
+                "string",
+                "number",
+                "boolean",
+                "object",
+                "array",
+                "null"
+              ]
+            }
+          },
+          "additionalProperties": true
+        },
+        "store_as": {
+          "type": [
+            "string",
+            "object"
+          ]
+        },
+        "store_scope": {
+          "type": "string",
+          "enum": [
+            "session",
+            "persistent"
+          ]
+        },
+        "trace_id": {
+          "type": "string"
+        },
+        "span_id": {
+          "type": "string"
+        },
+        "parent_span_id": {
+          "type": "string"
+        },
+        "preset": {
+          "type": "string"
+        },
+        "preset_name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "project",
+    "description": "Alias for mcp_project.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "project_upsert",
+            "project_get",
+            "project_list",
+            "project_delete",
+            "project_use",
+            "project_active",
+            "project_unuse"
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "project": {
+          "type": "object"
+        },
+        "description": {
+          "type": "string"
+        },
+        "default_target": {
+          "type": "string"
+        },
+        "targets": {
+          "type": "object"
+        },
+        "policy_profiles": {
+          "type": "object"
+        },
+        "scope": {
+          "type": "string",
+          "enum": [
+            "session",
+            "persistent",
+            "any"
+          ]
+        },
+        "output": {
+          "type": "object",
+          "description": "Output shaping (path/pick/omit/map).",
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "pick": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "omit": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "map": {
+              "type": "object"
+            },
+            "missing": {
+              "type": "string",
+              "enum": [
+                "error",
+                "empty",
+                "null",
+                "undefined"
+              ]
+            },
+            "default": {
+              "type": [
+                "string",
+                "number",
+                "boolean",
+                "object",
+                "array",
+                "null"
+              ]
+            }
+          },
+          "additionalProperties": true
+        },
+        "store_as": {
+          "type": [
+            "string",
+            "object"
+          ]
+        },
+        "store_scope": {
+          "type": "string",
+          "enum": [
+            "session",
+            "persistent"
+          ]
+        },
+        "trace_id": {
+          "type": "string"
+        },
+        "span_id": {
+          "type": "string"
+        },
+        "parent_span_id": {
+          "type": "string"
+        },
+        "preset": {
+          "type": "string"
+        },
+        "preset_name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "context",
+    "description": "Alias for mcp_context.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "get",
+            "refresh",
+            "summary",
+            "list",
+            "stats"
+          ]
+        },
+        "key": {
+          "type": "string"
+        },
+        "project": {
+          "type": "string"
+        },
+        "project_name": {
+          "type": "string"
+        },
+        "target": {
+          "type": "string"
+        },
+        "project_target": {
+          "type": "string"
+        },
+        "environment": {
+          "type": "string"
+        },
+        "cwd": {
+          "type": "string"
+        },
+        "repo_root": {
+          "type": "string"
+        },
+        "refresh": {
+          "type": "boolean"
+        },
+        "output": {
+          "type": "object",
+          "description": "Output shaping (path/pick/omit/map).",
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "pick": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "omit": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "map": {
+              "type": "object"
+            },
+            "missing": {
+              "type": "string",
+              "enum": [
+                "error",
+                "empty",
+                "null",
+                "undefined"
+              ]
+            },
+            "default": {
+              "type": [
+                "string",
+                "number",
+                "boolean",
+                "object",
+                "array",
+                "null"
+              ]
+            }
+          },
+          "additionalProperties": true
+        },
+        "store_as": {
+          "type": [
+            "string",
+            "object"
+          ]
+        },
+        "store_scope": {
+          "type": "string",
+          "enum": [
+            "session",
+            "persistent"
+          ]
+        },
+        "trace_id": {
+          "type": "string"
+        },
+        "span_id": {
+          "type": "string"
+        },
+        "parent_span_id": {
+          "type": "string"
+        },
+        "preset": {
+          "type": "string"
+        },
+        "preset_name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "workspace",
+    "description": "Alias for mcp_workspace.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "summary",
+            "suggest",
+            "diagnose",
+            "store_status",
+            "run",
+            "cleanup",
+            "stats"
+          ]
+        },
+        "key": {
+          "type": "string"
+        },
+        "project": {
+          "type": "string"
+        },
+        "project_name": {
+          "type": "string"
+        },
+        "target": {
+          "type": "string"
+        },
+        "project_target": {
+          "type": "string"
+        },
+        "environment": {
+          "type": "string"
+        },
+        "cwd": {
+          "type": "string"
+        },
+        "repo_root": {
+          "type": "string"
+        },
+        "limit": {
+          "type": "number"
+        },
+        "include_untagged": {
+          "type": "boolean"
+        },
+        "name": {
+          "type": "string"
+        },
+        "runbook": {
+          "type": "object"
+        },
+        "input": {
+          "type": "object"
+        },
+        "inputs": {
+          "type": "object"
+        },
+        "intent": {
+          "type": "object"
+        },
+        "intent_type": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string"
+        },
+        "stop_on_error": {
+          "type": "boolean"
+        },
+        "template_missing": {
+          "type": "string",
+          "enum": [
+            "error",
+            "empty",
+            "null",
+            "undefined"
+          ]
+        },
+        "seed_state": {
+          "type": "object"
+        },
+        "seed_state_scope": {
+          "type": "string",
+          "enum": [
+            "session",
+            "persistent",
+            "any"
+          ]
+        },
+        "apply": {
+          "type": "boolean"
+        },
+        "cleanup": {
+          "type": "boolean"
+        },
+        "overwrite": {
+          "type": "boolean"
+        },
+        "include_dirs": {
+          "type": "boolean"
+        },
+        "output": {
+          "type": "object",
+          "description": "Output shaping (path/pick/omit/map).",
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "pick": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "omit": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "map": {
+              "type": "object"
+            },
+            "missing": {
+              "type": "string",
+              "enum": [
+                "error",
+                "empty",
+                "null",
+                "undefined"
+              ]
+            },
+            "default": {
+              "type": [
+                "string",
+                "number",
+                "boolean",
+                "object",
+                "array",
+                "null"
+              ]
+            }
+          },
+          "additionalProperties": true
+        },
+        "store_as": {
+          "type": [
+            "string",
+            "object"
+          ]
+        },
+        "store_scope": {
+          "type": "string",
+          "enum": [
+            "session",
+            "persistent"
+          ]
+        },
+        "trace_id": {
+          "type": "string"
+        },
+        "span_id": {
+          "type": "string"
+        },
+        "parent_span_id": {
+          "type": "string"
+        },
+        "preset": {
+          "type": "string"
+        },
+        "preset_name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "env",
+    "description": "Alias for mcp_env.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "profile_upsert",
+            "profile_get",
+            "profile_list",
+            "profile_delete",
+            "write_remote",
+            "run_remote"
+          ]
+        },
+        "profile_name": {
+          "type": "string"
+        },
+        "include_secrets": {
+          "type": "boolean"
+        },
+        "description": {
+          "type": "string"
+        },
+        "variables": {
+          "type": "object"
+        },
+        "env": {
+          "type": "object"
+        },
+        "data": {
+          "type": "object"
+        },
+        "secrets": {
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "project": {
+          "type": "string"
+        },
+        "project_name": {
+          "type": "string"
+        },
+        "target": {
+          "type": "string"
+        },
+        "project_target": {
+          "type": "string"
+        },
+        "environment": {
+          "type": "string"
+        },
+        "ssh_profile_name": {
+          "type": "string"
+        },
+        "ssh_profile": {
+          "type": "string"
+        },
+        "env_profile": {
+          "type": "string"
+        },
+        "vault_profile_name": {
+          "type": "string"
+        },
+        "vault_profile": {
+          "type": "string"
+        },
+        "remote_path": {
+          "type": "string"
+        },
+        "mode": {
+          "type": "integer"
+        },
+        "mkdirs": {
+          "type": "boolean"
+        },
+        "overwrite": {
+          "type": "boolean"
+        },
+        "backup": {
+          "type": "boolean"
+        },
+        "command": {
+          "type": "string"
+        },
+        "cwd": {
+          "type": "string"
+        },
+        "stdin": {
+          "type": "string"
+        },
+        "timeout_ms": {
+          "type": "integer"
+        },
+        "pty": {
+          "type": [
+            "boolean",
+            "object"
+          ]
+        },
+        "output": {
+          "type": "object",
+          "description": "Output shaping (path/pick/omit/map).",
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "pick": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "omit": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "map": {
+              "type": "object"
+            },
+            "missing": {
+              "type": "string",
+              "enum": [
+                "error",
+                "empty",
+                "null",
+                "undefined"
+              ]
+            },
+            "default": {
+              "type": [
+                "string",
+                "number",
+                "boolean",
+                "object",
+                "array",
+                "null"
+              ]
+            }
+          },
+          "additionalProperties": true
+        },
+        "store_as": {
+          "type": [
+            "string",
+            "object"
+          ]
+        },
+        "store_scope": {
+          "type": "string",
+          "enum": [
+            "session",
+            "persistent"
+          ]
+        },
+        "trace_id": {
+          "type": "string"
+        },
+        "span_id": {
+          "type": "string"
+        },
+        "parent_span_id": {
+          "type": "string"
+        },
+        "preset": {
+          "type": "string"
+        },
+        "preset_name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "vault",
+    "description": "Alias for mcp_vault.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "profile_upsert",
+            "profile_get",
+            "profile_list",
+            "profile_delete",
+            "profile_test"
+          ]
+        },
+        "profile_name": {
+          "type": "string"
+        },
+        "include_secrets": {
+          "type": "boolean"
+        },
+        "addr": {
+          "type": "string"
+        },
+        "namespace": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "auth_type": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "token": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "role_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "secret_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "timeout_ms": {
+          "type": "integer"
+        },
+        "output": {
+          "type": "object",
+          "description": "Output shaping (path/pick/omit/map).",
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "pick": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "omit": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "map": {
+              "type": "object"
+            },
+            "missing": {
+              "type": "string",
+              "enum": [
+                "error",
+                "empty",
+                "null",
+                "undefined"
+              ]
+            },
+            "default": {
+              "type": [
+                "string",
+                "number",
+                "boolean",
+                "object",
+                "array",
+                "null"
+              ]
+            }
+          },
+          "additionalProperties": true
+        },
+        "store_as": {
+          "type": [
+            "string",
+            "object"
+          ]
+        },
+        "store_scope": {
+          "type": "string",
+          "enum": [
+            "session",
+            "persistent"
+          ]
+        },
+        "trace_id": {
+          "type": "string"
+        },
+        "span_id": {
+          "type": "string"
+        },
+        "parent_span_id": {
+          "type": "string"
+        },
+        "preset": {
+          "type": "string"
+        },
+        "preset_name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "runbook",
+    "description": "Alias for mcp_runbook.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "runbook_upsert",
+            "runbook_upsert_dsl",
+            "runbook_get",
+            "runbook_list",
+            "runbook_delete",
+            "runbook_run",
+            "runbook_run_dsl",
+            "runbook_compile"
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "runbook": {
+          "type": "object"
+        },
+        "dsl": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        },
+        "input": {
+          "type": "object"
+        },
+        "seed_state": {
+          "type": "object"
+        },
+        "seed_state_scope": {
+          "type": "string",
+          "enum": [
+            "session",
+            "persistent"
+          ]
+        },
+        "stop_on_error": {
+          "type": "boolean"
+        },
+        "template_missing": {
+          "type": "string",
+          "enum": [
+            "error",
+            "empty",
+            "null",
+            "undefined"
+          ]
+        },
+        "output": {
+          "type": "object",
+          "description": "Output shaping (path/pick/omit/map).",
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "pick": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "omit": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "map": {
+              "type": "object"
+            },
+            "missing": {
+              "type": "string",
+              "enum": [
+                "error",
+                "empty",
+                "null",
+                "undefined"
+              ]
+            },
+            "default": {
+              "type": [
+                "string",
+                "number",
+                "boolean",
+                "object",
+                "array",
+                "null"
+              ]
+            }
+          },
+          "additionalProperties": true
+        },
+        "store_as": {
+          "type": [
+            "string",
+            "object"
+          ]
+        },
+        "store_scope": {
+          "type": "string",
+          "enum": [
+            "session",
+            "persistent"
+          ]
+        },
+        "trace_id": {
+          "type": "string"
+        },
+        "span_id": {
+          "type": "string"
+        },
+        "parent_span_id": {
+          "type": "string"
+        },
+        "preset": {
+          "type": "string"
+        },
+        "preset_name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "capability",
+    "description": "Alias for mcp_capability.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "list",
+            "get",
+            "set",
+            "delete",
+            "resolve",
+            "suggest",
+            "graph",
+            "stats"
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "intent": {
+          "type": "string"
+        },
+        "capability": {
+          "type": "object"
+        },
+        "project": {
+          "type": "string"
+        },
+        "project_name": {
+          "type": "string"
+        },
+        "target": {
+          "type": "string"
+        },
+        "project_target": {
+          "type": "string"
+        },
+        "environment": {
+          "type": "string"
+        },
+        "cwd": {
+          "type": "string"
+        },
+        "repo_root": {
+          "type": "string"
+        },
+        "limit": {
+          "type": "integer",
+          "description": "Max items to return."
+        },
+        "offset": {
+          "type": "integer",
+          "description": "Items to skip before returning results."
+        },
+        "query": {
+          "type": "string",
+          "description": "Free-text search across name/description."
+        },
+        "where": {
+          "type": "object",
+          "description": "Exact-match filters on list item fields."
+        },
+        "tags": {
+          "type": [
+            "array",
+            "string"
+          ],
+          "items": {
+            "type": "string"
+          },
+          "description": "Filter by tags (array or comma-separated string)."
+        },
+        "output": {
+          "type": "object",
+          "description": "Output shaping (path/pick/omit/map).",
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "pick": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "omit": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "map": {
+              "type": "object"
+            },
+            "missing": {
+              "type": "string",
+              "enum": [
+                "error",
+                "empty",
+                "null",
+                "undefined"
+              ]
+            },
+            "default": {
+              "type": [
+                "string",
+                "number",
+                "boolean",
+                "object",
+                "array",
+                "null"
+              ]
+            }
+          },
+          "additionalProperties": true
+        },
+        "store_as": {
+          "type": [
+            "string",
+            "object"
+          ]
+        },
+        "store_scope": {
+          "type": "string",
+          "enum": [
+            "session",
+            "persistent"
+          ]
+        },
+        "trace_id": {
+          "type": "string"
+        },
+        "span_id": {
+          "type": "string"
+        },
+        "parent_span_id": {
+          "type": "string"
+        },
+        "preset": {
+          "type": "string"
+        },
+        "preset_name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "intent",
+    "description": "Alias for mcp_intent.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "compile",
+            "dry_run",
+            "execute",
+            "explain"
+          ]
+        },
+        "intent": {
+          "type": "object"
+        },
+        "apply": {
+          "type": "boolean"
+        },
+        "project": {
+          "type": "string"
+        },
+        "project_name": {
+          "type": "string"
+        },
+        "target": {
+          "type": "string"
+        },
+        "project_target": {
+          "type": "string"
+        },
+        "environment": {
+          "type": "string"
+        },
+        "cwd": {
+          "type": "string"
+        },
+        "repo_root": {
+          "type": "string"
+        },
+        "context_key": {
+          "type": "string"
+        },
+        "context_refresh": {
+          "type": "boolean"
+        },
+        "stop_on_error": {
+          "type": "boolean"
+        },
+        "template_missing": {
+          "type": "string",
+          "enum": [
+            "error",
+            "empty",
+            "null",
+            "undefined"
+          ]
+        },
+        "save_evidence": {
+          "type": "boolean"
+        },
+        "output": {
+          "type": "object",
+          "description": "Output shaping (path/pick/omit/map).",
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "pick": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "omit": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "map": {
+              "type": "object"
+            },
+            "missing": {
+              "type": "string",
+              "enum": [
+                "error",
+                "empty",
+                "null",
+                "undefined"
+              ]
+            },
+            "default": {
+              "type": [
+                "string",
+                "number",
+                "boolean",
+                "object",
+                "array",
+                "null"
+              ]
+            }
+          },
+          "additionalProperties": true
+        },
+        "store_as": {
+          "type": [
+            "string",
+            "object"
+          ]
+        },
+        "store_scope": {
+          "type": "string",
+          "enum": [
+            "session",
+            "persistent"
+          ]
+        },
+        "trace_id": {
+          "type": "string"
+        },
+        "span_id": {
+          "type": "string"
+        },
+        "parent_span_id": {
+          "type": "string"
+        },
+        "preset": {
+          "type": "string"
+        },
+        "preset_name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "evidence",
+    "description": "Alias for mcp_evidence.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "list",
+            "get"
+          ]
+        },
+        "id": {
+          "type": "string"
+        },
+        "limit": {
+          "type": "integer"
+        },
+        "offset": {
+          "type": "integer"
+        },
+        "query": {
+          "type": "string"
+        },
+        "output": {
+          "type": "object",
+          "description": "Output shaping (path/pick/omit/map).",
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "pick": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "omit": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "map": {
+              "type": "object"
+            },
+            "missing": {
+              "type": "string",
+              "enum": [
+                "error",
+                "empty",
+                "null",
+                "undefined"
+              ]
+            },
+            "default": {
+              "type": [
+                "string",
+                "number",
+                "boolean",
+                "object",
+                "array",
+                "null"
+              ]
+            }
+          },
+          "additionalProperties": true
+        },
+        "store_as": {
+          "type": [
+            "string",
+            "object"
+          ]
+        },
+        "store_scope": {
+          "type": "string",
+          "enum": [
+            "session",
+            "persistent"
+          ]
+        },
+        "trace_id": {
+          "type": "string"
+        },
+        "span_id": {
+          "type": "string"
+        },
+        "parent_span_id": {
+          "type": "string"
+        },
+        "preset": {
+          "type": "string"
+        },
+        "preset_name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "alias",
+    "description": "Alias for mcp_alias.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "alias_upsert",
+            "alias_get",
+            "alias_list",
+            "alias_delete",
+            "alias_resolve"
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "alias": {
+          "type": "object"
+        },
+        "tool": {
+          "type": "string"
+        },
+        "args": {
+          "type": "object"
+        },
+        "preset": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "output": {
+          "type": "object",
+          "description": "Output shaping (path/pick/omit/map).",
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "pick": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "omit": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "map": {
+              "type": "object"
+            },
+            "missing": {
+              "type": "string",
+              "enum": [
+                "error",
+                "empty",
+                "null",
+                "undefined"
+              ]
+            },
+            "default": {
+              "type": [
+                "string",
+                "number",
+                "boolean",
+                "object",
+                "array",
+                "null"
+              ]
+            }
+          },
+          "additionalProperties": true
+        },
+        "store_as": {
+          "type": [
+            "string",
+            "object"
+          ]
+        },
+        "store_scope": {
+          "type": "string",
+          "enum": [
+            "session",
+            "persistent"
+          ]
+        },
+        "trace_id": {
+          "type": "string"
+        },
+        "span_id": {
+          "type": "string"
+        },
+        "parent_span_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "preset",
+    "description": "Alias for mcp_preset.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "preset_upsert",
+            "preset_get",
+            "preset_list",
+            "preset_delete"
+          ]
+        },
+        "tool": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "preset": {
+          "type": "object"
+        },
+        "output": {
+          "type": "object",
+          "description": "Output shaping (path/pick/omit/map).",
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "pick": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "omit": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "map": {
+              "type": "object"
+            },
+            "missing": {
+              "type": "string",
+              "enum": [
+                "error",
+                "empty",
+                "null",
+                "undefined"
+              ]
+            },
+            "default": {
+              "type": [
+                "string",
+                "number",
+                "boolean",
+                "object",
+                "array",
+                "null"
+              ]
+            }
+          },
+          "additionalProperties": true
+        },
+        "store_as": {
+          "type": [
+            "string",
+            "object"
+          ]
+        },
+        "store_scope": {
+          "type": "string",
+          "enum": [
+            "session",
+            "persistent"
+          ]
+        },
+        "trace_id": {
+          "type": "string"
+        },
+        "span_id": {
+          "type": "string"
+        },
+        "parent_span_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "audit",
+    "description": "Alias for mcp_audit.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "audit_list",
+            "audit_tail",
+            "audit_clear",
+            "audit_stats"
+          ]
+        },
+        "limit": {
+          "type": "integer"
+        },
+        "offset": {
+          "type": "integer"
+        },
+        "reverse": {
+          "type": "boolean"
+        },
+        "trace_id": {
+          "type": "string"
+        },
+        "tool": {
+          "type": "string"
+        },
+        "audit_action": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "ok",
+            "error"
+          ]
+        },
+        "since": {
+          "type": "string"
+        },
+        "output": {
+          "type": "object",
+          "description": "Output shaping (path/pick/omit/map).",
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "pick": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "omit": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "map": {
+              "type": "object"
+            },
+            "missing": {
+              "type": "string",
+              "enum": [
+                "error",
+                "empty",
+                "null",
+                "undefined"
+              ]
+            },
+            "default": {
+              "type": [
+                "string",
+                "number",
+                "boolean",
+                "object",
+                "array",
+                "null"
+              ]
+            }
+          },
+          "additionalProperties": true
+        },
+        "store_as": {
+          "type": [
+            "string",
+            "object"
+          ]
+        },
+        "store_scope": {
+          "type": "string",
+          "enum": [
+            "session",
+            "persistent"
+          ]
+        },
+        "span_id": {
+          "type": "string"
+        },
+        "parent_span_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "pipeline",
+    "description": "Alias for mcp_pipeline.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "run",
+            "describe",
+            "deploy_smoke"
+          ]
+        },
+        "flow": {
+          "type": "string",
+          "enum": [
+            "http_to_sftp",
+            "sftp_to_http",
+            "http_to_postgres",
+            "sftp_to_postgres",
+            "postgres_to_sftp",
+            "postgres_to_http"
+          ]
+        },
+        "project": {
+          "type": "string"
+        },
+        "project_name": {
+          "type": "string"
+        },
+        "target": {
+          "type": "string"
+        },
+        "project_target": {
+          "type": "string"
+        },
+        "environment": {
+          "type": "string"
+        },
+        "vault_profile_name": {
+          "type": "string"
+        },
+        "vault_profile": {
+          "type": "string"
+        },
+        "local_path": {
+          "type": "string"
+        },
+        "remote_path": {
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        },
+        "restart": {
+          "type": "string"
+        },
+        "restart_command": {
+          "type": "string"
+        },
+        "overwrite": {
+          "type": "boolean"
+        },
+        "mkdirs": {
+          "type": "boolean"
+        },
+        "preserve_mtime": {
+          "type": "boolean"
+        },
+        "expect_code": {
+          "type": "integer"
+        },
+        "follow_redirects": {
+          "type": "boolean"
+        },
+        "insecure_ok": {
+          "type": "boolean"
+        },
+        "max_bytes": {
+          "type": "integer"
+        },
+        "settle_ms": {
+          "type": "integer"
+        },
+        "smoke_attempts": {
+          "type": "integer"
+        },
+        "smoke_delay_ms": {
+          "type": "integer"
+        },
+        "smoke_timeout_ms": {
+          "type": "integer"
+        },
+        "http": {
+          "type": "object"
+        },
+        "sftp": {
+          "type": "object"
+        },
+        "postgres": {
+          "type": "object"
+        },
+        "format": {
+          "type": "string",
+          "enum": [
+            "jsonl",
+            "csv"
+          ]
+        },
+        "batch_size": {
+          "type": "integer"
+        },
+        "max_rows": {
+          "type": "integer"
+        },
+        "limit": {
+          "type": "integer"
+        },
+        "offset": {
+          "type": "integer"
+        },
+        "columns": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "columns_sql": {
+          "type": "string"
+        },
+        "order_by": {
+          "type": "array"
+        },
+        "order_by_sql": {
+          "type": "string"
+        },
+        "filters": {
+          "type": "object"
+        },
+        "where_sql": {
+          "type": "string"
+        },
+        "where_params": {
+          "type": "array"
+        },
+        "timeout_ms": {
+          "type": "integer"
+        },
+        "csv_header": {
+          "type": "boolean"
+        },
+        "csv_delimiter": {
+          "type": "string"
+        },
+        "cache": {
+          "type": "object"
+        },
+        "output": {
+          "type": "object",
+          "description": "Output shaping (path/pick/omit/map).",
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "pick": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "omit": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "map": {
+              "type": "object"
+            },
+            "missing": {
+              "type": "string",
+              "enum": [
+                "error",
+                "empty",
+                "null",
+                "undefined"
+              ]
+            },
+            "default": {
+              "type": [
+                "string",
+                "number",
+                "boolean",
+                "object",
+                "array",
+                "null"
+              ]
+            }
+          },
+          "additionalProperties": true
+        },
+        "store_as": {
+          "type": [
+            "string",
+            "object"
+          ]
+        },
+        "store_scope": {
+          "type": "string",
+          "enum": [
+            "session",
+            "persistent"
+          ]
+        },
+        "trace_id": {
+          "type": "string"
+        },
+        "span_id": {
+          "type": "string"
+        },
+        "parent_span_id": {
+          "type": "string"
+        },
+        "preset": {
+          "type": "string"
+        },
+        "preset_name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "additionalProperties": false
+    }
+  }
+]

@@ -1,0 +1,2531 @@
+{
+  "k8s.render": {
+    "description": "Render kustomize overlay via kubectl kustomize.",
+    "tags": ["k8s", "gitops"],
+    "inputs": ["overlay", "kubeconfig", "sops_age_key_file"],
+    "steps": [
+      {
+        "id": "render",
+        "tool": "mcp_local",
+        "args": {
+          "action": "exec",
+          "command": "kubectl",
+          "args": ["kustomize", "{{ input.overlay }}"],
+          "env": {
+            "KUBECONFIG": "{{ input.kubeconfig }}",
+            "SOPS_AGE_KEY_FILE": "{{ ?input.sops_age_key_file }}"
+          },
+          "inline": true
+        }
+      }
+    ]
+  },
+  "k8s.diff": {
+    "description": "Render and diff against cluster.",
+    "tags": ["k8s", "gitops", "read"],
+    "inputs": ["overlay", "kubeconfig", "sops_age_key_file"],
+    "steps": [
+      {
+        "id": "render",
+        "tool": "mcp_local",
+        "args": {
+          "action": "exec",
+          "command": "kubectl",
+          "args": ["kustomize", "{{ input.overlay }}"],
+          "env": {
+            "KUBECONFIG": "{{ input.kubeconfig }}",
+            "SOPS_AGE_KEY_FILE": "{{ ?input.sops_age_key_file }}"
+          },
+          "inline": true
+        }
+      },
+      {
+        "id": "diff",
+        "tool": "mcp_local",
+        "args": {
+          "action": "exec",
+          "command": "kubectl",
+          "args": ["diff", "-f", "-"],
+          "stdin": "{{ steps.render.stdout }}",
+          "env": {
+            "KUBECONFIG": "{{ input.kubeconfig }}"
+          },
+          "inline": true
+        }
+      }
+    ]
+  },
+  "k8s.apply": {
+    "description": "Render and apply to cluster.",
+    "tags": ["k8s", "gitops", "write"],
+    "inputs": ["overlay", "kubeconfig", "sops_age_key_file"],
+    "steps": [
+      {
+        "id": "render",
+        "tool": "mcp_local",
+        "args": {
+          "action": "exec",
+          "command": "kubectl",
+          "args": ["kustomize", "{{ input.overlay }}"],
+          "env": {
+            "KUBECONFIG": "{{ input.kubeconfig }}",
+            "SOPS_AGE_KEY_FILE": "{{ ?input.sops_age_key_file }}"
+          },
+          "inline": true
+        }
+      },
+      {
+        "id": "apply",
+        "tool": "mcp_local",
+        "args": {
+          "action": "exec",
+          "command": "kubectl",
+          "args": ["apply", "-f", "-"],
+          "stdin": "{{ steps.render.stdout }}",
+          "env": {
+            "KUBECONFIG": "{{ input.kubeconfig }}"
+          },
+          "inline": true
+        }
+      }
+    ]
+  },
+  "k8s.rollout.inspect": {
+    "description": "Inspect rollout/deployment and related pods by selector.",
+    "tags": ["k8s", "diagnostic", "read"],
+    "inputs": ["kubeconfig", "namespace", "selector", "workload_kind", "workload_name", "logs", "tail_lines"],
+    "steps": [
+      {
+        "id": "rollouts",
+        "tool": "mcp_local",
+        "continue_on_error": true,
+        "args": {
+          "action": "exec",
+          "command": "kubectl",
+          "args": ["-n", "{{ input.namespace }}", "get", "rollouts"],
+          "env": {
+            "KUBECONFIG": "{{ ?input.kubeconfig }}"
+          },
+          "inline": true
+        }
+      },
+      {
+        "id": "deployments",
+        "tool": "mcp_local",
+        "continue_on_error": true,
+        "args": {
+          "action": "exec",
+          "command": "kubectl",
+          "args": ["-n", "{{ input.namespace }}", "get", "deploy"],
+          "env": {
+            "KUBECONFIG": "{{ ?input.kubeconfig }}"
+          },
+          "inline": true
+        }
+      },
+      {
+        "id": "pods",
+        "tool": "mcp_local",
+        "continue_on_error": true,
+        "args": {
+          "action": "exec",
+          "command": "kubectl",
+          "args": ["-n", "{{ input.namespace }}", "get", "pods", "-l", "{{ input.selector }}", "-o", "wide"],
+          "env": {
+            "KUBECONFIG": "{{ ?input.kubeconfig }}"
+          },
+          "inline": true
+        }
+      },
+      {
+        "id": "describe_workload",
+        "tool": "mcp_local",
+        "continue_on_error": true,
+        "args": {
+          "action": "exec",
+          "command": "kubectl",
+          "args": ["-n", "{{ input.namespace }}", "describe", "{{ input.workload_kind }}", "{{ input.workload_name }}"],
+          "env": {
+            "KUBECONFIG": "{{ ?input.kubeconfig }}"
+          },
+          "inline": true
+        }
+      },
+      {
+        "id": "pod_name",
+        "tool": "mcp_local",
+        "continue_on_error": true,
+        "args": {
+          "action": "exec",
+          "command": "kubectl",
+          "args": ["-n", "{{ input.namespace }}", "get", "pods", "-l", "{{ input.selector }}", "-o", "jsonpath={.items[0].metadata.name}"],
+          "env": {
+            "KUBECONFIG": "{{ ?input.kubeconfig }}"
+          },
+          "inline": true
+        }
+      },
+      {
+        "id": "describe_pod",
+        "tool": "mcp_local",
+        "when": {
+          "and": [
+            { "path": "steps.pod_name.stdout", "exists": true },
+            { "path": "steps.pod_name.stdout", "not_equals": "" }
+          ]
+        },
+        "continue_on_error": true,
+        "args": {
+          "action": "exec",
+          "command": "kubectl",
+          "args": ["-n", "{{ input.namespace }}", "describe", "pod", "{{ steps.pod_name.stdout }}"],
+          "env": {
+            "KUBECONFIG": "{{ ?input.kubeconfig }}"
+          },
+          "inline": true
+        }
+      },
+      {
+        "id": "logs",
+        "tool": "mcp_local",
+        "when": {
+          "and": [
+            { "path": "input.logs", "equals": true },
+            { "path": "steps.pod_name.stdout", "exists": true },
+            { "path": "steps.pod_name.stdout", "not_equals": "" }
+          ]
+        },
+        "continue_on_error": true,
+        "args": {
+          "action": "exec",
+          "command": "kubectl",
+          "args": ["-n", "{{ input.namespace }}", "logs", "{{ steps.pod_name.stdout }}", "--tail", "{{ input.tail_lines }}"],
+          "env": {
+            "KUBECONFIG": "{{ ?input.kubeconfig }}"
+          },
+          "inline": true
+        }
+      }
+    ]
+  },
+  "k8s.images.list": {
+    "description": "List container images used by workloads in a namespace.",
+    "tags": ["k8s", "read"],
+    "inputs": ["kubeconfig", "namespace"],
+    "steps": [
+      {
+        "id": "images",
+        "tool": "mcp_local",
+        "args": {
+          "action": "exec",
+          "command": "sh",
+          "args": [
+            "-c",
+            "kubectl -n {{ input.namespace }} get deploy,sts,ds,job,cronjob -o jsonpath='{..image}' | tr ' ' '\\n' | sort -u"
+          ],
+          "env": {
+            "KUBECONFIG": "{{ ?input.kubeconfig }}"
+          },
+          "inline": true
+        }
+      }
+    ]
+  },
+  "gitops.argocd.refresh": {
+    "description": "Refresh ArgoCD application and show status.",
+    "tags": ["gitops", "argocd", "write"],
+    "inputs": ["kubeconfig", "namespace", "app_name", "refresh"],
+    "steps": [
+      {
+        "id": "status_before",
+        "tool": "mcp_local",
+        "args": {
+          "action": "exec",
+          "command": "kubectl",
+          "args": ["-n", "{{ input.namespace }}", "get", "application", "{{ input.app_name }}", "-o", "wide"],
+          "env": {
+            "KUBECONFIG": "{{ ?input.kubeconfig }}"
+          },
+          "inline": true
+        }
+      },
+      {
+        "id": "refresh",
+        "tool": "mcp_local",
+        "when": { "path": "input.refresh", "equals": true },
+        "continue_on_error": true,
+        "args": {
+          "action": "exec",
+          "command": "kubectl",
+          "args": [
+            "-n",
+            "{{ input.namespace }}",
+            "patch",
+            "application",
+            "{{ input.app_name }}",
+            "--type",
+            "merge",
+            "-p",
+            "{\"metadata\":{\"annotations\":{\"argocd.argoproj.io/refresh\":\"hard\"}}}"
+          ],
+          "env": {
+            "KUBECONFIG": "{{ ?input.kubeconfig }}"
+          },
+          "inline": true
+        }
+      },
+      {
+        "id": "status_after",
+        "tool": "mcp_local",
+        "when": { "path": "input.refresh", "equals": true },
+        "continue_on_error": true,
+        "args": {
+          "action": "exec",
+          "command": "kubectl",
+          "args": ["-n", "{{ input.namespace }}", "get", "application", "{{ input.app_name }}", "-o", "wide"],
+          "env": {
+            "KUBECONFIG": "{{ ?input.kubeconfig }}"
+          },
+          "inline": true
+        }
+      }
+    ]
+  },
+  "gitops.status.argocd": {
+    "description": "GitOps status (ArgoCD marker): repo snapshot.",
+    "tags": ["gitops", "argocd", "read"],
+    "inputs": ["repo_root"],
+    "steps": [
+      {
+        "id": "repo",
+        "tool": "mcp_repo",
+        "args": {
+          "action": "repo_info",
+          "repo_root": "{{ input.repo_root }}"
+        }
+      }
+    ]
+  },
+  "gitops.status.flux": {
+    "description": "GitOps status (Flux marker): repo snapshot.",
+    "tags": ["gitops", "flux", "read"],
+    "inputs": ["repo_root"],
+    "steps": [
+      {
+        "id": "repo",
+        "tool": "mcp_repo",
+        "args": {
+          "action": "repo_info",
+          "repo_root": "{{ input.repo_root }}"
+        }
+      }
+    ]
+  },
+  "gitops.plan.argocd": {
+    "description": "GitOps plan (ArgoCD marker): render + git diff.",
+    "tags": ["gitops", "argocd", "read"],
+    "inputs": [
+      "repo_root",
+      "overlay",
+      "render_type",
+      "chart",
+      "values",
+      "require_digest_pinning",
+      "disallow_latest"
+    ],
+    "steps": [
+      {
+        "id": "repo",
+        "tool": "mcp_repo",
+        "args": {
+          "action": "repo_info",
+          "repo_root": "{{ input.repo_root }}"
+        }
+      },
+      {
+        "id": "render",
+        "tool": "mcp_repo",
+        "args": {
+          "action": "render",
+          "repo_root": "{{ input.repo_root }}",
+          "render_type": "{{ ?input.render_type }}",
+          "overlay": "{{ ?input.overlay }}",
+          "chart": "{{ ?input.chart }}",
+          "values": "{{ ?input.values }}"
+        }
+      },
+      {
+        "id": "diff",
+        "tool": "mcp_repo",
+        "args": {
+          "action": "git_diff",
+          "repo_root": "{{ input.repo_root }}"
+        }
+      },
+      {
+        "id": "policy_require_digest",
+        "tool": "mcp_state",
+        "when": { "path": "input.require_digest_pinning", "equals": true },
+        "retry": {
+          "max_attempts": 1,
+          "delay_ms": 0,
+          "until": {
+            "and": [
+              { "path": "result.success", "equals": true },
+              { "path": "steps.render.images_summary.unpinned", "equals": 0 }
+            ]
+          }
+        },
+        "args": {
+          "action": "dump",
+          "scope": "session"
+        }
+      },
+      {
+        "id": "policy_disallow_latest",
+        "tool": "mcp_state",
+        "when": { "path": "input.disallow_latest", "equals": true },
+        "retry": {
+          "max_attempts": 1,
+          "delay_ms": 0,
+          "until": {
+            "and": [
+              { "path": "result.success", "equals": true },
+              { "path": "steps.render.images_summary.latest", "equals": 0 }
+            ]
+          }
+        },
+        "args": {
+          "action": "dump",
+          "scope": "session"
+        }
+      },
+      {
+        "id": "remember_plan",
+        "tool": "mcp_state",
+        "args": {
+          "action": "set",
+          "scope": "session",
+          "key": "gitops.plan.{{ input.repo_root }}.{{ trace_id }}",
+          "value": {
+            "trace_id": "{{ trace_id }}",
+            "repo_root": "{{ input.repo_root }}",
+            "render_ref": "{{ steps.render.render_ref }}",
+            "images_ref": "{{ steps.render.images_ref }}",
+            "images_summary": "{{ steps.render.images_summary }}",
+            "images_violations": "{{ steps.render.images_violations }}",
+            "diff_ref": "{{ steps.diff.diff_ref }}",
+            "diff_sha256": "{{ steps.diff.diff_sha256 }}",
+            "diff_truncated": "{{ steps.diff.diff_truncated }}",
+            "diffstat": "{{ steps.diff.diffstat }}"
+          }
+        }
+      }
+    ]
+  },
+  "gitops.plan.flux": {
+    "description": "GitOps plan (Flux marker): render + git diff.",
+    "tags": ["gitops", "flux", "read"],
+    "inputs": [
+      "repo_root",
+      "overlay",
+      "render_type",
+      "chart",
+      "values",
+      "require_digest_pinning",
+      "disallow_latest"
+    ],
+    "steps": [
+      {
+        "id": "repo",
+        "tool": "mcp_repo",
+        "args": {
+          "action": "repo_info",
+          "repo_root": "{{ input.repo_root }}"
+        }
+      },
+      {
+        "id": "render",
+        "tool": "mcp_repo",
+        "args": {
+          "action": "render",
+          "repo_root": "{{ input.repo_root }}",
+          "render_type": "{{ ?input.render_type }}",
+          "overlay": "{{ ?input.overlay }}",
+          "chart": "{{ ?input.chart }}",
+          "values": "{{ ?input.values }}"
+        }
+      },
+      {
+        "id": "diff",
+        "tool": "mcp_repo",
+        "args": {
+          "action": "git_diff",
+          "repo_root": "{{ input.repo_root }}"
+        }
+      },
+      {
+        "id": "policy_require_digest",
+        "tool": "mcp_state",
+        "when": { "path": "input.require_digest_pinning", "equals": true },
+        "retry": {
+          "max_attempts": 1,
+          "delay_ms": 0,
+          "until": {
+            "and": [
+              { "path": "result.success", "equals": true },
+              { "path": "steps.render.images_summary.unpinned", "equals": 0 }
+            ]
+          }
+        },
+        "args": {
+          "action": "dump",
+          "scope": "session"
+        }
+      },
+      {
+        "id": "policy_disallow_latest",
+        "tool": "mcp_state",
+        "when": { "path": "input.disallow_latest", "equals": true },
+        "retry": {
+          "max_attempts": 1,
+          "delay_ms": 0,
+          "until": {
+            "and": [
+              { "path": "result.success", "equals": true },
+              { "path": "steps.render.images_summary.latest", "equals": 0 }
+            ]
+          }
+        },
+        "args": {
+          "action": "dump",
+          "scope": "session"
+        }
+      },
+      {
+        "id": "remember_plan",
+        "tool": "mcp_state",
+        "args": {
+          "action": "set",
+          "scope": "session",
+          "key": "gitops.plan.{{ input.repo_root }}.{{ trace_id }}",
+          "value": {
+            "trace_id": "{{ trace_id }}",
+            "repo_root": "{{ input.repo_root }}",
+            "render_ref": "{{ steps.render.render_ref }}",
+            "images_ref": "{{ steps.render.images_ref }}",
+            "images_summary": "{{ steps.render.images_summary }}",
+            "images_violations": "{{ steps.render.images_violations }}",
+            "diff_ref": "{{ steps.diff.diff_ref }}",
+            "diff_sha256": "{{ steps.diff.diff_sha256 }}",
+            "diff_truncated": "{{ steps.diff.diff_truncated }}",
+            "diffstat": "{{ steps.diff.diffstat }}"
+          }
+        }
+      }
+    ]
+  },
+  "gitops.propose": {
+    "description": "GitOps propose: branch + patch + commit + push + PR/MR.",
+    "tags": ["gitops", "write"],
+    "inputs": [
+      "repo_root",
+      "plan_trace_id",
+      "patch",
+      "message",
+      "title",
+      "body",
+      "remote",
+      "branch_prefix",
+      "base_branch",
+      "github_api_base_url",
+      "gitlab_api_base_url",
+      "wait_for_checks",
+      "checks_max_attempts",
+      "checks_delay_ms",
+      "merge",
+      "merge_method"
+    ],
+    "steps": [
+      {
+        "id": "repo",
+        "tool": "mcp_repo",
+        "args": {
+          "action": "repo_info",
+          "repo_root": "{{ input.repo_root }}"
+        }
+      },
+      {
+        "id": "assert_clean",
+        "tool": "mcp_repo",
+        "args": {
+          "action": "assert_clean",
+          "repo_root": "{{ input.repo_root }}"
+        }
+      },
+      {
+        "id": "plan_evidence_explicit",
+        "tool": "mcp_state",
+        "when": {
+          "and": [
+            { "path": "input.plan_trace_id", "exists": true },
+            { "path": "input.plan_trace_id", "not_equals": null },
+            { "path": "input.plan_trace_id", "not_equals": "" }
+          ]
+        },
+        "retry": {
+          "max_attempts": 1,
+          "delay_ms": 0,
+          "until": {
+            "and": [
+              { "path": "result.success", "equals": true },
+              { "path": "result.value.trace_id", "exists": true },
+              { "path": "result.value.trace_id", "equals": "{{ input.plan_trace_id }}" }
+            ]
+          }
+        },
+        "args": {
+          "action": "get",
+          "scope": "session",
+          "key": "gitops.plan.{{ input.repo_root }}.{{ input.plan_trace_id }}"
+        }
+      },
+      {
+        "id": "plan_evidence_same_trace",
+        "tool": "mcp_state",
+        "when": {
+          "or": [
+            { "path": "input.plan_trace_id", "exists": false },
+            { "path": "input.plan_trace_id", "equals": null },
+            { "path": "input.plan_trace_id", "equals": "" }
+          ]
+        },
+        "retry": {
+          "max_attempts": 1,
+          "delay_ms": 0,
+          "until": {
+            "and": [
+              { "path": "result.success", "equals": true },
+              { "path": "result.value.trace_id", "exists": true },
+              { "path": "result.value.trace_id", "equals": "{{ trace_id }}" }
+            ]
+          }
+        },
+        "args": {
+          "action": "get",
+          "scope": "session",
+          "key": "gitops.plan.{{ input.repo_root }}.{{ trace_id }}"
+        }
+      },
+      {
+        "id": "branch",
+        "tool": "mcp_repo",
+        "args": {
+          "action": "exec",
+          "repo_root": "{{ input.repo_root }}",
+          "command": "git",
+          "args": ["switch", "-c", "{{ input.branch_prefix }}/{{ trace_id }}"],
+          "apply": "{{ input.apply }}"
+        }
+      },
+      {
+        "id": "patch",
+        "tool": "mcp_repo",
+        "args": {
+          "action": "apply_patch",
+          "repo_root": "{{ input.repo_root }}",
+          "patch": "{{ input.patch }}",
+          "apply": "{{ input.apply }}"
+        }
+      },
+      {
+        "id": "diff_after_patch",
+        "tool": "mcp_repo",
+        "args": {
+          "action": "git_diff",
+          "repo_root": "{{ input.repo_root }}"
+        }
+      },
+      {
+        "id": "assert_planned_diff",
+        "tool": "mcp_state",
+        "retry": {
+          "max_attempts": 1,
+          "delay_ms": 0,
+          "until": {
+            "and": [
+              { "path": "result.success", "equals": true },
+              {
+                "or": [
+                  { "path": "steps.plan_evidence_explicit.value.diff_sha256", "exists": true },
+                  { "path": "steps.plan_evidence_same_trace.value.diff_sha256", "exists": true }
+                ]
+              },
+              {
+                "or": [
+                  { "path": "steps.plan_evidence_explicit.value.diff_truncated", "exists": true },
+                  { "path": "steps.plan_evidence_same_trace.value.diff_truncated", "exists": true }
+                ]
+              },
+              { "path": "steps.diff_after_patch.diff_truncated", "equals": false },
+              {
+                "or": [
+                  { "path": "steps.plan_evidence_explicit.value.diff_truncated", "equals": false },
+                  { "path": "steps.plan_evidence_same_trace.value.diff_truncated", "equals": false }
+                ]
+              },
+              {
+                "path": "steps.diff_after_patch.diff_sha256",
+                "equals": "{{ ?steps.plan_evidence_explicit.value.diff_sha256 }}{{ ?steps.plan_evidence_same_trace.value.diff_sha256 }}"
+              }
+            ]
+          }
+        },
+        "args": {
+          "action": "dump",
+          "scope": "session"
+        }
+      },
+      {
+        "id": "commit",
+        "tool": "mcp_repo",
+        "args": {
+          "action": "git_commit",
+          "repo_root": "{{ input.repo_root }}",
+          "message": "{{ input.message }}",
+          "apply": "{{ input.apply }}"
+        }
+      },
+      {
+        "id": "push",
+        "tool": "mcp_repo",
+        "args": {
+          "action": "git_push",
+          "repo_root": "{{ input.repo_root }}",
+          "remote": "{{ ?input.remote }}",
+          "branch": "{{ input.branch_prefix }}/{{ trace_id }}",
+          "apply": "{{ input.apply }}"
+        }
+      },
+      {
+        "id": "pr_github_input_base",
+        "tool": "mcp_api_client",
+        "when": {
+          "and": [
+            { "path": "steps.repo.provider.provider", "equals": "github" },
+            { "path": "input.base_branch", "exists": true },
+            { "path": "input.base_branch", "not_equals": null },
+            { "path": "input.base_branch", "not_equals": "" }
+          ]
+        },
+        "args": {
+          "action": "request",
+          "method": "POST",
+          "base_url": "{{ input.github_api_base_url }}",
+          "path": "/repos/{{ steps.repo.provider.owner }}/{{ steps.repo.provider.repo }}/pulls",
+          "body": {
+            "title": "{{ input.title }}",
+            "head": "{{ steps.repo.provider.owner }}:{{ input.branch_prefix }}/{{ trace_id }}",
+            "base": "{{ input.base_branch }}",
+            "body": "{{ ?input.body }}"
+          }
+        }
+      },
+      {
+        "id": "pr_github_default_branch",
+        "tool": "mcp_api_client",
+        "when": {
+          "and": [
+            { "path": "steps.repo.provider.provider", "equals": "github" },
+            {
+              "or": [
+                { "path": "input.base_branch", "exists": false },
+                { "path": "input.base_branch", "equals": null },
+                { "path": "input.base_branch", "equals": "" }
+              ]
+            },
+            { "path": "steps.repo.default_branch", "exists": true },
+            { "path": "steps.repo.default_branch", "not_equals": null },
+            { "path": "steps.repo.default_branch", "not_equals": "" }
+          ]
+        },
+        "args": {
+          "action": "request",
+          "method": "POST",
+          "base_url": "{{ input.github_api_base_url }}",
+          "path": "/repos/{{ steps.repo.provider.owner }}/{{ steps.repo.provider.repo }}/pulls",
+          "body": {
+            "title": "{{ input.title }}",
+            "head": "{{ steps.repo.provider.owner }}:{{ input.branch_prefix }}/{{ trace_id }}",
+            "base": "{{ steps.repo.default_branch }}",
+            "body": "{{ ?input.body }}"
+          }
+        }
+      },
+      {
+        "id": "pr_github_current_branch",
+        "tool": "mcp_api_client",
+        "when": {
+          "and": [
+            { "path": "steps.repo.provider.provider", "equals": "github" },
+            {
+              "or": [
+                { "path": "input.base_branch", "exists": false },
+                { "path": "input.base_branch", "equals": null },
+                { "path": "input.base_branch", "equals": "" }
+              ]
+            },
+            {
+              "or": [
+                { "path": "steps.repo.default_branch", "exists": false },
+                { "path": "steps.repo.default_branch", "equals": null },
+                { "path": "steps.repo.default_branch", "equals": "" }
+              ]
+            }
+          ]
+        },
+        "args": {
+          "action": "request",
+          "method": "POST",
+          "base_url": "{{ input.github_api_base_url }}",
+          "path": "/repos/{{ steps.repo.provider.owner }}/{{ steps.repo.provider.repo }}/pulls",
+          "body": {
+            "title": "{{ input.title }}",
+            "head": "{{ steps.repo.provider.owner }}:{{ input.branch_prefix }}/{{ trace_id }}",
+            "base": "{{ steps.repo.branch }}",
+            "body": "{{ ?input.body }}"
+          }
+        }
+      },
+      {
+        "id": "mr_gitlab_input_base",
+        "tool": "mcp_api_client",
+        "when": {
+          "and": [
+            { "path": "steps.repo.provider.provider", "equals": "gitlab" },
+            { "path": "input.base_branch", "exists": true },
+            { "path": "input.base_branch", "not_equals": null },
+            { "path": "input.base_branch", "not_equals": "" }
+          ]
+        },
+        "args": {
+          "action": "request",
+          "method": "POST",
+          "base_url": "{{ input.gitlab_api_base_url }}",
+          "path": "/projects/{{ steps.repo.provider.owner }}%2F{{ steps.repo.provider.repo }}/merge_requests",
+          "body": {
+            "title": "{{ input.title }}",
+            "source_branch": "{{ input.branch_prefix }}/{{ trace_id }}",
+            "target_branch": "{{ input.base_branch }}",
+            "description": "{{ ?input.body }}"
+          }
+        }
+      },
+      {
+        "id": "mr_gitlab_default_branch",
+        "tool": "mcp_api_client",
+        "when": {
+          "and": [
+            { "path": "steps.repo.provider.provider", "equals": "gitlab" },
+            {
+              "or": [
+                { "path": "input.base_branch", "exists": false },
+                { "path": "input.base_branch", "equals": null },
+                { "path": "input.base_branch", "equals": "" }
+              ]
+            },
+            { "path": "steps.repo.default_branch", "exists": true },
+            { "path": "steps.repo.default_branch", "not_equals": null },
+            { "path": "steps.repo.default_branch", "not_equals": "" }
+          ]
+        },
+        "args": {
+          "action": "request",
+          "method": "POST",
+          "base_url": "{{ input.gitlab_api_base_url }}",
+          "path": "/projects/{{ steps.repo.provider.owner }}%2F{{ steps.repo.provider.repo }}/merge_requests",
+          "body": {
+            "title": "{{ input.title }}",
+            "source_branch": "{{ input.branch_prefix }}/{{ trace_id }}",
+            "target_branch": "{{ steps.repo.default_branch }}",
+            "description": "{{ ?input.body }}"
+          }
+        }
+      },
+      {
+        "id": "mr_gitlab_current_branch",
+        "tool": "mcp_api_client",
+        "when": {
+          "and": [
+            { "path": "steps.repo.provider.provider", "equals": "gitlab" },
+            {
+              "or": [
+                { "path": "input.base_branch", "exists": false },
+                { "path": "input.base_branch", "equals": null },
+                { "path": "input.base_branch", "equals": "" }
+              ]
+            },
+            {
+              "or": [
+                { "path": "steps.repo.default_branch", "exists": false },
+                { "path": "steps.repo.default_branch", "equals": null },
+                { "path": "steps.repo.default_branch", "equals": "" }
+              ]
+            }
+          ]
+        },
+        "args": {
+          "action": "request",
+          "method": "POST",
+          "base_url": "{{ input.gitlab_api_base_url }}",
+          "path": "/projects/{{ steps.repo.provider.owner }}%2F{{ steps.repo.provider.repo }}/merge_requests",
+          "body": {
+            "title": "{{ input.title }}",
+            "source_branch": "{{ input.branch_prefix }}/{{ trace_id }}",
+            "target_branch": "{{ steps.repo.branch }}",
+            "description": "{{ ?input.body }}"
+          }
+        }
+      },
+      {
+        "id": "pr_comment_evidence_input_base",
+        "tool": "mcp_api_client",
+        "when": {
+          "and": [
+            { "path": "steps.repo.provider.provider", "equals": "github" },
+            { "path": "steps.pr_github_input_base.data.number", "exists": true },
+            {
+              "or": [
+                { "path": "steps.plan_evidence_explicit.value.diff_ref", "exists": true },
+                { "path": "steps.plan_evidence_same_trace.value.diff_ref", "exists": true }
+              ]
+            }
+          ]
+        },
+        "args": {
+          "action": "request",
+          "method": "POST",
+          "base_url": "{{ input.github_api_base_url }}",
+          "path": "/repos/{{ steps.repo.provider.owner }}/{{ steps.repo.provider.repo }}/issues/{{ steps.pr_github_input_base.data.number }}/comments",
+          "body": {
+            "body": "Infra plan evidence\n\n- plan_trace_id: {{ ?steps.plan_evidence_explicit.value.trace_id }}{{ ?steps.plan_evidence_same_trace.value.trace_id }}\n- propose_trace_id: {{ trace_id }}\n- render: {{ ?steps.plan_evidence_explicit.value.render_ref }}{{ ?steps.plan_evidence_same_trace.value.render_ref }}\n- diff: {{ ?steps.plan_evidence_explicit.value.diff_ref }}{{ ?steps.plan_evidence_same_trace.value.diff_ref }}\n- diffstat: {{ ?steps.plan_evidence_explicit.value.diffstat }}{{ ?steps.plan_evidence_same_trace.value.diffstat }}\n- images: {{ ?steps.plan_evidence_explicit.value.images_summary }}{{ ?steps.plan_evidence_same_trace.value.images_summary }}\n- images.json: {{ ?steps.plan_evidence_explicit.value.images_ref }}{{ ?steps.plan_evidence_same_trace.value.images_ref }}\n"
+          }
+        }
+      },
+      {
+        "id": "pr_comment_evidence_default_branch",
+        "tool": "mcp_api_client",
+        "when": {
+          "and": [
+            { "path": "steps.repo.provider.provider", "equals": "github" },
+            { "path": "steps.pr_github_default_branch.data.number", "exists": true },
+            {
+              "or": [
+                { "path": "steps.plan_evidence_explicit.value.diff_ref", "exists": true },
+                { "path": "steps.plan_evidence_same_trace.value.diff_ref", "exists": true }
+              ]
+            }
+          ]
+        },
+        "args": {
+          "action": "request",
+          "method": "POST",
+          "base_url": "{{ input.github_api_base_url }}",
+          "path": "/repos/{{ steps.repo.provider.owner }}/{{ steps.repo.provider.repo }}/issues/{{ steps.pr_github_default_branch.data.number }}/comments",
+          "body": {
+            "body": "Infra plan evidence\n\n- plan_trace_id: {{ ?steps.plan_evidence_explicit.value.trace_id }}{{ ?steps.plan_evidence_same_trace.value.trace_id }}\n- propose_trace_id: {{ trace_id }}\n- render: {{ ?steps.plan_evidence_explicit.value.render_ref }}{{ ?steps.plan_evidence_same_trace.value.render_ref }}\n- diff: {{ ?steps.plan_evidence_explicit.value.diff_ref }}{{ ?steps.plan_evidence_same_trace.value.diff_ref }}\n- diffstat: {{ ?steps.plan_evidence_explicit.value.diffstat }}{{ ?steps.plan_evidence_same_trace.value.diffstat }}\n- images: {{ ?steps.plan_evidence_explicit.value.images_summary }}{{ ?steps.plan_evidence_same_trace.value.images_summary }}\n- images.json: {{ ?steps.plan_evidence_explicit.value.images_ref }}{{ ?steps.plan_evidence_same_trace.value.images_ref }}\n"
+          }
+        }
+      },
+      {
+        "id": "pr_comment_evidence_current_branch",
+        "tool": "mcp_api_client",
+        "when": {
+          "and": [
+            { "path": "steps.repo.provider.provider", "equals": "github" },
+            { "path": "steps.pr_github_current_branch.data.number", "exists": true },
+            {
+              "or": [
+                { "path": "steps.plan_evidence_explicit.value.diff_ref", "exists": true },
+                { "path": "steps.plan_evidence_same_trace.value.diff_ref", "exists": true }
+              ]
+            }
+          ]
+        },
+        "args": {
+          "action": "request",
+          "method": "POST",
+          "base_url": "{{ input.github_api_base_url }}",
+          "path": "/repos/{{ steps.repo.provider.owner }}/{{ steps.repo.provider.repo }}/issues/{{ steps.pr_github_current_branch.data.number }}/comments",
+          "body": {
+            "body": "Infra plan evidence\n\n- plan_trace_id: {{ ?steps.plan_evidence_explicit.value.trace_id }}{{ ?steps.plan_evidence_same_trace.value.trace_id }}\n- propose_trace_id: {{ trace_id }}\n- render: {{ ?steps.plan_evidence_explicit.value.render_ref }}{{ ?steps.plan_evidence_same_trace.value.render_ref }}\n- diff: {{ ?steps.plan_evidence_explicit.value.diff_ref }}{{ ?steps.plan_evidence_same_trace.value.diff_ref }}\n- diffstat: {{ ?steps.plan_evidence_explicit.value.diffstat }}{{ ?steps.plan_evidence_same_trace.value.diffstat }}\n- images: {{ ?steps.plan_evidence_explicit.value.images_summary }}{{ ?steps.plan_evidence_same_trace.value.images_summary }}\n- images.json: {{ ?steps.plan_evidence_explicit.value.images_ref }}{{ ?steps.plan_evidence_same_trace.value.images_ref }}\n"
+          }
+        }
+      },
+      {
+        "id": "github_checks",
+        "tool": "mcp_api_client",
+        "when": {
+          "and": [
+            { "path": "steps.repo.provider.provider", "equals": "github" },
+            { "path": "input.wait_for_checks", "equals": true }
+          ]
+        },
+        "retry": {
+          "max_attempts": "{{ input.checks_max_attempts }}",
+          "delay_ms": "{{ input.checks_delay_ms }}",
+          "until": {
+            "and": [
+              { "path": "result.success", "equals": true },
+              { "path": "result.data.state", "equals": "success" }
+            ]
+          }
+        },
+        "args": {
+          "action": "request",
+          "method": "GET",
+          "base_url": "{{ input.github_api_base_url }}",
+          "path": "/repos/{{ steps.repo.provider.owner }}/{{ steps.repo.provider.repo }}/commits/{{ steps.commit.sha }}/status"
+        }
+      },
+      {
+        "id": "github_merge_input_base",
+        "tool": "mcp_api_client",
+        "when": {
+          "and": [
+            { "path": "steps.repo.provider.provider", "equals": "github" },
+            { "path": "input.merge", "equals": true },
+            { "path": "input.wait_for_checks", "equals": true },
+            { "path": "steps.pr_github_input_base.data.number", "exists": true }
+          ]
+        },
+        "args": {
+          "action": "request",
+          "method": "PUT",
+          "base_url": "{{ input.github_api_base_url }}",
+          "path": "/repos/{{ steps.repo.provider.owner }}/{{ steps.repo.provider.repo }}/pulls/{{ steps.pr_github_input_base.data.number }}/merge",
+          "body": { "merge_method": "{{ input.merge_method }}" }
+        }
+      },
+      {
+        "id": "github_merge_default_branch",
+        "tool": "mcp_api_client",
+        "when": {
+          "and": [
+            { "path": "steps.repo.provider.provider", "equals": "github" },
+            { "path": "input.merge", "equals": true },
+            { "path": "input.wait_for_checks", "equals": true },
+            { "path": "steps.pr_github_default_branch.data.number", "exists": true }
+          ]
+        },
+        "args": {
+          "action": "request",
+          "method": "PUT",
+          "base_url": "{{ input.github_api_base_url }}",
+          "path": "/repos/{{ steps.repo.provider.owner }}/{{ steps.repo.provider.repo }}/pulls/{{ steps.pr_github_default_branch.data.number }}/merge",
+          "body": { "merge_method": "{{ input.merge_method }}" }
+        }
+      },
+      {
+        "id": "github_merge_current_branch",
+        "tool": "mcp_api_client",
+        "when": {
+          "and": [
+            { "path": "steps.repo.provider.provider", "equals": "github" },
+            { "path": "input.merge", "equals": true },
+            { "path": "input.wait_for_checks", "equals": true },
+            { "path": "steps.pr_github_current_branch.data.number", "exists": true }
+          ]
+        },
+        "args": {
+          "action": "request",
+          "method": "PUT",
+          "base_url": "{{ input.github_api_base_url }}",
+          "path": "/repos/{{ steps.repo.provider.owner }}/{{ steps.repo.provider.repo }}/pulls/{{ steps.pr_github_current_branch.data.number }}/merge",
+          "body": { "merge_method": "{{ input.merge_method }}" }
+        }
+      }
+    ]
+  },
+  "gitops.sync.argocd": {
+    "description": "GitOps sync (ArgoCD): trigger sync and wait for Synced/Healthy.",
+    "tags": ["gitops", "argocd", "write"],
+    "inputs": ["repo_root", "kubeconfig", "namespace", "app_name", "plan_trace_id", "wait", "max_attempts", "delay_ms"],
+    "steps": [
+      {
+        "id": "plan_gate_explicit",
+        "tool": "mcp_state",
+        "when": {
+          "and": [
+            { "path": "input.plan_trace_id", "exists": true },
+            { "path": "input.plan_trace_id", "not_equals": null },
+            { "path": "input.plan_trace_id", "not_equals": "" }
+          ]
+        },
+        "retry": {
+          "max_attempts": 1,
+          "delay_ms": 0,
+          "until": {
+            "and": [
+              { "path": "result.success", "equals": true },
+              { "path": "result.value.trace_id", "exists": true },
+              { "path": "result.value.trace_id", "equals": "{{ input.plan_trace_id }}" }
+            ]
+          }
+        },
+        "args": {
+          "action": "get",
+          "key": "gitops.plan.{{ input.repo_root }}.{{ input.plan_trace_id }}",
+          "scope": "session"
+        }
+      },
+      {
+        "id": "plan_gate_same_trace",
+        "tool": "mcp_state",
+        "when": {
+          "or": [
+            { "path": "input.plan_trace_id", "exists": false },
+            { "path": "input.plan_trace_id", "equals": null },
+            { "path": "input.plan_trace_id", "equals": "" }
+          ]
+        },
+        "retry": {
+          "max_attempts": 1,
+          "delay_ms": 0,
+          "until": {
+            "and": [
+              { "path": "result.success", "equals": true },
+              { "path": "result.value.trace_id", "exists": true },
+              { "path": "result.value.trace_id", "equals": "{{ trace_id }}" }
+            ]
+          }
+        },
+        "args": {
+          "action": "get",
+          "key": "gitops.plan.{{ input.repo_root }}.{{ trace_id }}",
+          "scope": "session"
+        }
+      },
+      {
+        "id": "sync",
+        "tool": "mcp_repo",
+        "args": {
+          "action": "exec",
+          "repo_root": "{{ input.repo_root }}",
+          "command": "kubectl",
+          "args": [
+            "-n",
+            "{{ input.namespace }}",
+            "patch",
+            "application",
+            "{{ input.app_name }}",
+            "--type",
+            "merge",
+            "-p",
+            "{\"operation\":{\"sync\":{}}}"
+          ],
+          "env": {
+            "KUBECONFIG": "{{ input.kubeconfig }}"
+          },
+          "apply": "{{ input.apply }}"
+        }
+      },
+      {
+        "id": "wait",
+        "tool": "mcp_repo",
+        "when": { "path": "input.wait", "equals": true },
+        "retry": {
+          "max_attempts": "{{ input.max_attempts }}",
+          "delay_ms": "{{ input.delay_ms }}",
+          "until": {
+            "and": [
+              { "path": "result.success", "equals": true },
+              { "path": "result.stdout_inline", "contains": "Synced" },
+              { "path": "result.stdout_inline", "contains": "Healthy" }
+            ]
+          }
+        },
+        "args": {
+          "action": "exec",
+          "repo_root": "{{ input.repo_root }}",
+          "command": "kubectl",
+          "args": [
+            "-n",
+            "{{ input.namespace }}",
+            "get",
+            "application",
+            "{{ input.app_name }}",
+            "-o",
+            "jsonpath={.status.sync.status} {.status.health.status}"
+          ],
+          "env": {
+            "KUBECONFIG": "{{ input.kubeconfig }}"
+          },
+          "inline": true
+        }
+      }
+    ]
+  },
+  "gitops.sync.flux": {
+    "description": "GitOps sync (Flux): request reconcile and wait for Ready=True.",
+    "tags": ["gitops", "flux", "write"],
+    "inputs": ["repo_root", "kubeconfig", "namespace", "kustomization_name", "plan_trace_id", "wait", "max_attempts", "delay_ms"],
+    "steps": [
+      {
+        "id": "plan_gate_explicit",
+        "tool": "mcp_state",
+        "when": {
+          "and": [
+            { "path": "input.plan_trace_id", "exists": true },
+            { "path": "input.plan_trace_id", "not_equals": null },
+            { "path": "input.plan_trace_id", "not_equals": "" }
+          ]
+        },
+        "retry": {
+          "max_attempts": 1,
+          "delay_ms": 0,
+          "until": {
+            "and": [
+              { "path": "result.success", "equals": true },
+              { "path": "result.value.trace_id", "exists": true },
+              { "path": "result.value.trace_id", "equals": "{{ input.plan_trace_id }}" }
+            ]
+          }
+        },
+        "args": {
+          "action": "get",
+          "key": "gitops.plan.{{ input.repo_root }}.{{ input.plan_trace_id }}",
+          "scope": "session"
+        }
+      },
+      {
+        "id": "plan_gate_same_trace",
+        "tool": "mcp_state",
+        "when": {
+          "or": [
+            { "path": "input.plan_trace_id", "exists": false },
+            { "path": "input.plan_trace_id", "equals": null },
+            { "path": "input.plan_trace_id", "equals": "" }
+          ]
+        },
+        "retry": {
+          "max_attempts": 1,
+          "delay_ms": 0,
+          "until": {
+            "and": [
+              { "path": "result.success", "equals": true },
+              { "path": "result.value.trace_id", "exists": true },
+              { "path": "result.value.trace_id", "equals": "{{ trace_id }}" }
+            ]
+          }
+        },
+        "args": {
+          "action": "get",
+          "key": "gitops.plan.{{ input.repo_root }}.{{ trace_id }}",
+          "scope": "session"
+        }
+      },
+      {
+        "id": "reconcile",
+        "tool": "mcp_repo",
+        "args": {
+          "action": "exec",
+          "repo_root": "{{ input.repo_root }}",
+          "command": "kubectl",
+          "args": [
+            "-n",
+            "{{ input.namespace }}",
+            "annotate",
+            "kustomization",
+            "{{ input.kustomization_name }}",
+            "reconcile.fluxcd.io/requestedAt={{ trace_id }}",
+            "--overwrite"
+          ],
+          "env": {
+            "KUBECONFIG": "{{ input.kubeconfig }}"
+          },
+          "apply": "{{ input.apply }}"
+        }
+      },
+      {
+        "id": "wait",
+        "tool": "mcp_repo",
+        "when": { "path": "input.wait", "equals": true },
+        "retry": {
+          "max_attempts": "{{ input.max_attempts }}",
+          "delay_ms": "{{ input.delay_ms }}",
+          "until": {
+            "and": [
+              { "path": "result.success", "equals": true },
+              { "path": "result.stdout_inline", "contains": "True" }
+            ]
+          }
+        },
+        "args": {
+          "action": "exec",
+          "repo_root": "{{ input.repo_root }}",
+          "command": "kubectl",
+          "args": [
+            "-n",
+            "{{ input.namespace }}",
+            "get",
+            "kustomization",
+            "{{ input.kustomization_name }}",
+            "-o",
+            "jsonpath={.status.conditions[?(@.type=='Ready')].status}"
+          ],
+          "env": {
+            "KUBECONFIG": "{{ input.kubeconfig }}"
+          },
+          "inline": true
+        }
+      }
+    ]
+  },
+  "gitops.verify.argocd": {
+    "description": "GitOps verify (ArgoCD): wait for Synced/Healthy.",
+    "tags": ["gitops", "argocd", "read"],
+    "inputs": [
+      "repo_root",
+      "kubeconfig",
+      "namespace",
+      "app_name",
+      "max_attempts",
+      "delay_ms",
+      "prometheus_base_url",
+      "prometheus_query",
+      "prometheus_max_value",
+      "metrics_max_attempts",
+      "metrics_delay_ms"
+    ],
+    "steps": [
+      {
+        "id": "status",
+        "tool": "mcp_repo",
+        "retry": {
+          "max_attempts": "{{ input.max_attempts }}",
+          "delay_ms": "{{ input.delay_ms }}",
+          "until": {
+            "and": [
+              { "path": "result.success", "equals": true },
+              { "path": "result.stdout_inline", "contains": "Synced" },
+              { "path": "result.stdout_inline", "contains": "Healthy" }
+            ]
+          }
+        },
+        "args": {
+          "action": "exec",
+          "repo_root": "{{ input.repo_root }}",
+          "command": "kubectl",
+          "args": [
+            "-n",
+            "{{ input.namespace }}",
+            "get",
+            "application",
+            "{{ input.app_name }}",
+            "-o",
+            "jsonpath={.status.sync.status} {.status.health.status}"
+          ],
+          "env": {
+            "KUBECONFIG": "{{ input.kubeconfig }}"
+          },
+          "inline": true
+        }
+      },
+      {
+        "id": "metrics",
+        "tool": "mcp_api_client",
+        "when": {
+          "and": [
+            { "path": "input.prometheus_base_url", "exists": true },
+            { "path": "input.prometheus_base_url", "not_equals": null },
+            { "path": "input.prometheus_base_url", "not_equals": "" },
+            { "path": "input.prometheus_query", "exists": true },
+            { "path": "input.prometheus_query", "not_equals": null },
+            { "path": "input.prometheus_query", "not_equals": "" },
+            { "path": "input.prometheus_max_value", "exists": true },
+            { "path": "input.prometheus_max_value", "not_equals": null }
+          ]
+        },
+        "retry": {
+          "max_attempts": "{{ input.metrics_max_attempts }}",
+          "delay_ms": "{{ input.metrics_delay_ms }}",
+          "until": {
+            "and": [
+              { "path": "result.success", "equals": true },
+              { "path": "result.data.status", "equals": "success" },
+              {
+                "path": "result.data.data.result[0].value[1]",
+                "lte": "{{ input.prometheus_max_value }}"
+              }
+            ]
+          }
+        },
+        "args": {
+          "action": "request",
+          "method": "GET",
+          "base_url": "{{ input.prometheus_base_url }}",
+          "path": "/api/v1/query",
+          "query": {
+            "query": "{{ input.prometheus_query }}"
+          }
+        }
+      }
+    ]
+  },
+  "gitops.verify.flux": {
+    "description": "GitOps verify (Flux): wait for Ready=True.",
+    "tags": ["gitops", "flux", "read"],
+    "inputs": [
+      "repo_root",
+      "kubeconfig",
+      "namespace",
+      "kustomization_name",
+      "max_attempts",
+      "delay_ms",
+      "prometheus_base_url",
+      "prometheus_query",
+      "prometheus_max_value",
+      "metrics_max_attempts",
+      "metrics_delay_ms"
+    ],
+    "steps": [
+      {
+        "id": "status",
+        "tool": "mcp_repo",
+        "retry": {
+          "max_attempts": "{{ input.max_attempts }}",
+          "delay_ms": "{{ input.delay_ms }}",
+          "until": {
+            "and": [
+              { "path": "result.success", "equals": true },
+              { "path": "result.stdout_inline", "contains": "True" }
+            ]
+          }
+        },
+        "args": {
+          "action": "exec",
+          "repo_root": "{{ input.repo_root }}",
+          "command": "kubectl",
+          "args": [
+            "-n",
+            "{{ input.namespace }}",
+            "get",
+            "kustomization",
+            "{{ input.kustomization_name }}",
+            "-o",
+            "jsonpath={.status.conditions[?(@.type=='Ready')].status}"
+          ],
+          "env": {
+            "KUBECONFIG": "{{ input.kubeconfig }}"
+          },
+          "inline": true
+        }
+      },
+      {
+        "id": "metrics",
+        "tool": "mcp_api_client",
+        "when": {
+          "and": [
+            { "path": "input.prometheus_base_url", "exists": true },
+            { "path": "input.prometheus_base_url", "not_equals": null },
+            { "path": "input.prometheus_base_url", "not_equals": "" },
+            { "path": "input.prometheus_query", "exists": true },
+            { "path": "input.prometheus_query", "not_equals": null },
+            { "path": "input.prometheus_query", "not_equals": "" },
+            { "path": "input.prometheus_max_value", "exists": true },
+            { "path": "input.prometheus_max_value", "not_equals": null }
+          ]
+        },
+        "retry": {
+          "max_attempts": "{{ input.metrics_max_attempts }}",
+          "delay_ms": "{{ input.metrics_delay_ms }}",
+          "until": {
+            "and": [
+              { "path": "result.success", "equals": true },
+              { "path": "result.data.status", "equals": "success" },
+              {
+                "path": "result.data.data.result[0].value[1]",
+                "lte": "{{ input.prometheus_max_value }}"
+              }
+            ]
+          }
+        },
+        "args": {
+          "action": "request",
+          "method": "GET",
+          "base_url": "{{ input.prometheus_base_url }}",
+          "path": "/api/v1/query",
+          "query": {
+            "query": "{{ input.prometheus_query }}"
+          }
+        }
+      }
+    ]
+  },
+  "gitops.rollback.argocd": {
+    "description": "GitOps rollback (ArgoCD): revert git commit, push, sync, verify.",
+    "tags": ["gitops", "argocd", "write"],
+    "inputs": [
+      "repo_root",
+      "kubeconfig",
+      "namespace",
+      "app_name",
+      "remote",
+      "base_branch",
+      "revert_sha",
+      "plan_trace_id",
+      "wait",
+      "max_attempts",
+      "delay_ms"
+    ],
+    "steps": [
+      {
+        "id": "plan_gate_explicit",
+        "tool": "mcp_state",
+        "when": {
+          "and": [
+            { "path": "input.plan_trace_id", "exists": true },
+            { "path": "input.plan_trace_id", "not_equals": null },
+            { "path": "input.plan_trace_id", "not_equals": "" }
+          ]
+        },
+        "retry": {
+          "max_attempts": 1,
+          "delay_ms": 0,
+          "until": {
+            "and": [
+              { "path": "result.success", "equals": true },
+              { "path": "result.value.trace_id", "exists": true },
+              { "path": "result.value.trace_id", "equals": "{{ input.plan_trace_id }}" }
+            ]
+          }
+        },
+        "args": {
+          "action": "get",
+          "key": "gitops.plan.{{ input.repo_root }}.{{ input.plan_trace_id }}",
+          "scope": "session"
+        }
+      },
+      {
+        "id": "plan_gate_same_trace",
+        "tool": "mcp_state",
+        "when": {
+          "or": [
+            { "path": "input.plan_trace_id", "exists": false },
+            { "path": "input.plan_trace_id", "equals": null },
+            { "path": "input.plan_trace_id", "equals": "" }
+          ]
+        },
+        "retry": {
+          "max_attempts": 1,
+          "delay_ms": 0,
+          "until": {
+            "and": [
+              { "path": "result.success", "equals": true },
+              { "path": "result.value.trace_id", "exists": true },
+              { "path": "result.value.trace_id", "equals": "{{ trace_id }}" }
+            ]
+          }
+        },
+        "args": {
+          "action": "get",
+          "key": "gitops.plan.{{ input.repo_root }}.{{ trace_id }}",
+          "scope": "session"
+        }
+      },
+      {
+        "id": "repo",
+        "tool": "mcp_repo",
+        "args": {
+          "action": "repo_info",
+          "repo_root": "{{ input.repo_root }}"
+        }
+      },
+      {
+        "id": "fetch",
+        "tool": "mcp_repo",
+        "args": {
+          "action": "exec",
+          "repo_root": "{{ input.repo_root }}",
+          "command": "git",
+          "args": ["fetch", "{{ input.remote }}"],
+          "apply": "{{ input.apply }}"
+        }
+      },
+      {
+        "id": "checkout_input_base",
+        "tool": "mcp_repo",
+        "when": {
+          "and": [
+            { "path": "input.base_branch", "exists": true },
+            { "path": "input.base_branch", "not_equals": null },
+            { "path": "input.base_branch", "not_equals": "" }
+          ]
+        },
+        "args": {
+          "action": "exec",
+          "repo_root": "{{ input.repo_root }}",
+          "command": "git",
+          "args": [
+            "switch",
+            "-C",
+            "{{ input.base_branch }}",
+            "{{ input.remote }}/{{ input.base_branch }}"
+          ],
+          "apply": "{{ input.apply }}"
+        }
+      },
+      {
+        "id": "checkout_default_branch",
+        "tool": "mcp_repo",
+        "when": {
+          "and": [
+            {
+              "or": [
+                { "path": "input.base_branch", "exists": false },
+                { "path": "input.base_branch", "equals": null },
+                { "path": "input.base_branch", "equals": "" }
+              ]
+            },
+            { "path": "steps.repo.default_branch", "exists": true },
+            { "path": "steps.repo.default_branch", "not_equals": null },
+            { "path": "steps.repo.default_branch", "not_equals": "" }
+          ]
+        },
+        "args": {
+          "action": "exec",
+          "repo_root": "{{ input.repo_root }}",
+          "command": "git",
+          "args": [
+            "switch",
+            "-C",
+            "{{ steps.repo.default_branch }}",
+            "{{ input.remote }}/{{ steps.repo.default_branch }}"
+          ],
+          "apply": "{{ input.apply }}"
+        }
+      },
+      {
+        "id": "checkout_current_branch",
+        "tool": "mcp_repo",
+        "when": {
+          "and": [
+            {
+              "or": [
+                { "path": "input.base_branch", "exists": false },
+                { "path": "input.base_branch", "equals": null },
+                { "path": "input.base_branch", "equals": "" }
+              ]
+            },
+            {
+              "or": [
+                { "path": "steps.repo.default_branch", "exists": false },
+                { "path": "steps.repo.default_branch", "equals": null },
+                { "path": "steps.repo.default_branch", "equals": "" }
+              ]
+            }
+          ]
+        },
+        "args": {
+          "action": "exec",
+          "repo_root": "{{ input.repo_root }}",
+          "command": "git",
+          "args": ["switch", "{{ steps.repo.branch }}"],
+          "apply": "{{ input.apply }}"
+        }
+      },
+      {
+        "id": "head",
+        "tool": "mcp_repo",
+        "args": {
+          "action": "exec",
+          "repo_root": "{{ input.repo_root }}",
+          "command": "git",
+          "args": ["rev-parse", "HEAD"],
+          "apply": "{{ input.apply }}",
+          "inline": true
+        }
+      },
+      {
+        "id": "revert_explicit",
+        "tool": "mcp_repo",
+        "when": {
+          "and": [
+            { "path": "input.revert_sha", "exists": true },
+            { "path": "input.revert_sha", "not_equals": null },
+            { "path": "input.revert_sha", "not_equals": "" }
+          ]
+        },
+        "args": {
+          "action": "git_revert",
+          "repo_root": "{{ input.repo_root }}",
+          "sha": "{{ input.revert_sha }}",
+          "apply": "{{ input.apply }}"
+        }
+      },
+      {
+        "id": "revert_head",
+        "tool": "mcp_repo",
+        "when": {
+          "or": [
+            { "path": "input.revert_sha", "exists": false },
+            { "path": "input.revert_sha", "equals": null },
+            { "path": "input.revert_sha", "equals": "" }
+          ]
+        },
+        "args": {
+          "action": "git_revert",
+          "repo_root": "{{ input.repo_root }}",
+          "sha": "{{ steps.head.stdout_inline }}",
+          "apply": "{{ input.apply }}"
+        }
+      },
+      {
+        "id": "push",
+        "tool": "mcp_repo",
+        "args": {
+          "action": "git_push",
+          "repo_root": "{{ input.repo_root }}",
+          "remote": "{{ input.remote }}",
+          "apply": "{{ input.apply }}"
+        }
+      },
+      {
+        "id": "sync",
+        "tool": "mcp_repo",
+        "args": {
+          "action": "exec",
+          "repo_root": "{{ input.repo_root }}",
+          "command": "kubectl",
+          "args": [
+            "-n",
+            "{{ input.namespace }}",
+            "patch",
+            "application",
+            "{{ input.app_name }}",
+            "--type",
+            "merge",
+            "-p",
+            "{\"operation\":{\"sync\":{}}}"
+          ],
+          "env": {
+            "KUBECONFIG": "{{ input.kubeconfig }}"
+          },
+          "apply": "{{ input.apply }}"
+        }
+      },
+      {
+        "id": "wait",
+        "tool": "mcp_repo",
+        "when": { "path": "input.wait", "equals": true },
+        "retry": {
+          "max_attempts": "{{ input.max_attempts }}",
+          "delay_ms": "{{ input.delay_ms }}",
+          "until": {
+            "and": [
+              { "path": "result.success", "equals": true },
+              { "path": "result.stdout_inline", "contains": "Synced" },
+              { "path": "result.stdout_inline", "contains": "Healthy" }
+            ]
+          }
+        },
+        "args": {
+          "action": "exec",
+          "repo_root": "{{ input.repo_root }}",
+          "command": "kubectl",
+          "args": [
+            "-n",
+            "{{ input.namespace }}",
+            "get",
+            "application",
+            "{{ input.app_name }}",
+            "-o",
+            "jsonpath={.status.sync.status} {.status.health.status}"
+          ],
+          "env": {
+            "KUBECONFIG": "{{ input.kubeconfig }}"
+          },
+          "inline": true
+        }
+      }
+    ]
+  },
+  "gitops.rollback.flux": {
+    "description": "GitOps rollback (Flux): revert git commit, push, reconcile, verify.",
+    "tags": ["gitops", "flux", "write"],
+    "inputs": [
+      "repo_root",
+      "kubeconfig",
+      "namespace",
+      "kustomization_name",
+      "remote",
+      "base_branch",
+      "revert_sha",
+      "plan_trace_id",
+      "wait",
+      "max_attempts",
+      "delay_ms"
+    ],
+    "steps": [
+      {
+        "id": "plan_gate_explicit",
+        "tool": "mcp_state",
+        "when": {
+          "and": [
+            { "path": "input.plan_trace_id", "exists": true },
+            { "path": "input.plan_trace_id", "not_equals": null },
+            { "path": "input.plan_trace_id", "not_equals": "" }
+          ]
+        },
+        "retry": {
+          "max_attempts": 1,
+          "delay_ms": 0,
+          "until": {
+            "and": [
+              { "path": "result.success", "equals": true },
+              { "path": "result.value.trace_id", "exists": true },
+              { "path": "result.value.trace_id", "equals": "{{ input.plan_trace_id }}" }
+            ]
+          }
+        },
+        "args": {
+          "action": "get",
+          "key": "gitops.plan.{{ input.repo_root }}.{{ input.plan_trace_id }}",
+          "scope": "session"
+        }
+      },
+      {
+        "id": "plan_gate_same_trace",
+        "tool": "mcp_state",
+        "when": {
+          "or": [
+            { "path": "input.plan_trace_id", "exists": false },
+            { "path": "input.plan_trace_id", "equals": null },
+            { "path": "input.plan_trace_id", "equals": "" }
+          ]
+        },
+        "retry": {
+          "max_attempts": 1,
+          "delay_ms": 0,
+          "until": {
+            "and": [
+              { "path": "result.success", "equals": true },
+              { "path": "result.value.trace_id", "exists": true },
+              { "path": "result.value.trace_id", "equals": "{{ trace_id }}" }
+            ]
+          }
+        },
+        "args": {
+          "action": "get",
+          "key": "gitops.plan.{{ input.repo_root }}.{{ trace_id }}",
+          "scope": "session"
+        }
+      },
+      {
+        "id": "repo",
+        "tool": "mcp_repo",
+        "args": {
+          "action": "repo_info",
+          "repo_root": "{{ input.repo_root }}"
+        }
+      },
+      {
+        "id": "fetch",
+        "tool": "mcp_repo",
+        "args": {
+          "action": "exec",
+          "repo_root": "{{ input.repo_root }}",
+          "command": "git",
+          "args": ["fetch", "{{ input.remote }}"],
+          "apply": "{{ input.apply }}"
+        }
+      },
+      {
+        "id": "checkout_input_base",
+        "tool": "mcp_repo",
+        "when": {
+          "and": [
+            { "path": "input.base_branch", "exists": true },
+            { "path": "input.base_branch", "not_equals": null },
+            { "path": "input.base_branch", "not_equals": "" }
+          ]
+        },
+        "args": {
+          "action": "exec",
+          "repo_root": "{{ input.repo_root }}",
+          "command": "git",
+          "args": [
+            "switch",
+            "-C",
+            "{{ input.base_branch }}",
+            "{{ input.remote }}/{{ input.base_branch }}"
+          ],
+          "apply": "{{ input.apply }}"
+        }
+      },
+      {
+        "id": "checkout_default_branch",
+        "tool": "mcp_repo",
+        "when": {
+          "and": [
+            {
+              "or": [
+                { "path": "input.base_branch", "exists": false },
+                { "path": "input.base_branch", "equals": null },
+                { "path": "input.base_branch", "equals": "" }
+              ]
+            },
+            { "path": "steps.repo.default_branch", "exists": true },
+            { "path": "steps.repo.default_branch", "not_equals": null },
+            { "path": "steps.repo.default_branch", "not_equals": "" }
+          ]
+        },
+        "args": {
+          "action": "exec",
+          "repo_root": "{{ input.repo_root }}",
+          "command": "git",
+          "args": [
+            "switch",
+            "-C",
+            "{{ steps.repo.default_branch }}",
+            "{{ input.remote }}/{{ steps.repo.default_branch }}"
+          ],
+          "apply": "{{ input.apply }}"
+        }
+      },
+      {
+        "id": "checkout_current_branch",
+        "tool": "mcp_repo",
+        "when": {
+          "and": [
+            {
+              "or": [
+                { "path": "input.base_branch", "exists": false },
+                { "path": "input.base_branch", "equals": null },
+                { "path": "input.base_branch", "equals": "" }
+              ]
+            },
+            {
+              "or": [
+                { "path": "steps.repo.default_branch", "exists": false },
+                { "path": "steps.repo.default_branch", "equals": null },
+                { "path": "steps.repo.default_branch", "equals": "" }
+              ]
+            }
+          ]
+        },
+        "args": {
+          "action": "exec",
+          "repo_root": "{{ input.repo_root }}",
+          "command": "git",
+          "args": ["switch", "{{ steps.repo.branch }}"],
+          "apply": "{{ input.apply }}"
+        }
+      },
+      {
+        "id": "head",
+        "tool": "mcp_repo",
+        "args": {
+          "action": "exec",
+          "repo_root": "{{ input.repo_root }}",
+          "command": "git",
+          "args": ["rev-parse", "HEAD"],
+          "apply": "{{ input.apply }}",
+          "inline": true
+        }
+      },
+      {
+        "id": "revert_explicit",
+        "tool": "mcp_repo",
+        "when": {
+          "and": [
+            { "path": "input.revert_sha", "exists": true },
+            { "path": "input.revert_sha", "not_equals": null },
+            { "path": "input.revert_sha", "not_equals": "" }
+          ]
+        },
+        "args": {
+          "action": "git_revert",
+          "repo_root": "{{ input.repo_root }}",
+          "sha": "{{ input.revert_sha }}",
+          "apply": "{{ input.apply }}"
+        }
+      },
+      {
+        "id": "revert_head",
+        "tool": "mcp_repo",
+        "when": {
+          "or": [
+            { "path": "input.revert_sha", "exists": false },
+            { "path": "input.revert_sha", "equals": null },
+            { "path": "input.revert_sha", "equals": "" }
+          ]
+        },
+        "args": {
+          "action": "git_revert",
+          "repo_root": "{{ input.repo_root }}",
+          "sha": "{{ steps.head.stdout_inline }}",
+          "apply": "{{ input.apply }}"
+        }
+      },
+      {
+        "id": "push",
+        "tool": "mcp_repo",
+        "args": {
+          "action": "git_push",
+          "repo_root": "{{ input.repo_root }}",
+          "remote": "{{ input.remote }}",
+          "apply": "{{ input.apply }}"
+        }
+      },
+      {
+        "id": "reconcile",
+        "tool": "mcp_repo",
+        "args": {
+          "action": "exec",
+          "repo_root": "{{ input.repo_root }}",
+          "command": "kubectl",
+          "args": [
+            "-n",
+            "{{ input.namespace }}",
+            "annotate",
+            "kustomization",
+            "{{ input.kustomization_name }}",
+            "reconcile.fluxcd.io/requestedAt={{ trace_id }}",
+            "--overwrite"
+          ],
+          "env": {
+            "KUBECONFIG": "{{ input.kubeconfig }}"
+          },
+          "apply": "{{ input.apply }}"
+        }
+      },
+      {
+        "id": "wait",
+        "tool": "mcp_repo",
+        "when": { "path": "input.wait", "equals": true },
+        "retry": {
+          "max_attempts": "{{ input.max_attempts }}",
+          "delay_ms": "{{ input.delay_ms }}",
+          "until": {
+            "and": [
+              { "path": "result.success", "equals": true },
+              { "path": "result.stdout_inline", "contains": "True" }
+            ]
+          }
+        },
+        "args": {
+          "action": "exec",
+          "repo_root": "{{ input.repo_root }}",
+          "command": "kubectl",
+          "args": [
+            "-n",
+            "{{ input.namespace }}",
+            "get",
+            "kustomization",
+            "{{ input.kustomization_name }}",
+            "-o",
+            "jsonpath={.status.conditions[?(@.type=='Ready')].status}"
+          ],
+          "env": {
+            "KUBECONFIG": "{{ input.kubeconfig }}"
+          },
+          "inline": true
+        }
+      }
+    ]
+  },
+  "gitops.release": {
+    "description": "GitOps release autopilot: plan→propose→merge→sync→verify→rollback.",
+    "tags": ["gitops", "write"],
+    "inputs": [
+      "repo_root",
+      "policy",
+      "overlay",
+      "render_type",
+      "chart",
+      "values",
+      "require_digest_pinning",
+      "disallow_latest",
+      "patch",
+      "message",
+      "title",
+      "body",
+      "remote",
+      "branch_prefix",
+      "base_branch",
+      "github_api_base_url",
+      "gitlab_api_base_url",
+      "wait_for_checks",
+      "checks_max_attempts",
+      "checks_delay_ms",
+      "merge",
+      "merge_method",
+      "kubeconfig",
+      "namespace",
+      "app_name",
+      "kustomization_name",
+      "revert_sha",
+      "prometheus_base_url",
+      "prometheus_query",
+      "prometheus_max_value",
+      "metrics_max_attempts",
+      "metrics_delay_ms",
+      "wait",
+      "max_attempts",
+      "delay_ms"
+    ],
+    "steps": [
+      {
+        "id": "assert_repo_clean",
+        "tool": "mcp_repo",
+        "args": {
+          "action": "assert_clean",
+          "repo_root": "{{ input.repo_root }}"
+        }
+      },
+      {
+        "id": "preplan_apply_patch",
+        "tool": "mcp_repo",
+        "continue_on_error": true,
+        "args": {
+          "action": "apply_patch",
+          "repo_root": "{{ input.repo_root }}",
+          "patch": "{{ input.patch }}",
+          "apply": "{{ input.apply }}"
+        }
+      },
+      {
+        "id": "plan",
+        "tool": "mcp_workspace",
+        "when": { "path": "steps.preplan_apply_patch.success", "equals": true },
+        "continue_on_error": true,
+        "args": {
+          "action": "run",
+          "intent_type": "gitops.plan",
+          "repo_root": "{{ input.repo_root }}",
+          "inputs": {
+            "project_name": "{{ ?input.project_name }}",
+            "target_name": "{{ ?input.target_name }}",
+            "overlay": "{{ ?input.overlay }}",
+            "render_type": "{{ ?input.render_type }}",
+            "chart": "{{ ?input.chart }}",
+            "values": "{{ ?input.values }}",
+            "policy": "{{ ?input.policy }}",
+            "require_digest_pinning": "{{ ?input.require_digest_pinning }}",
+            "disallow_latest": "{{ ?input.disallow_latest }}"
+          }
+        }
+      },
+      {
+        "id": "restore_reverse_patch",
+        "tool": "mcp_repo",
+        "continue_on_error": true,
+        "args": {
+          "action": "exec",
+          "repo_root": "{{ input.repo_root }}",
+          "command": "git",
+          "args": ["apply", "--reverse", "--whitespace=nowarn"],
+          "stdin": "{{ input.patch }}",
+          "apply": "{{ input.apply }}"
+        }
+      },
+      {
+        "id": "restore_reset",
+        "tool": "mcp_repo",
+        "retry": {
+          "max_attempts": 1,
+          "delay_ms": 0,
+          "until": {
+            "and": [
+              { "path": "result.success", "equals": true }
+            ]
+          }
+        },
+        "args": {
+          "action": "exec",
+          "repo_root": "{{ input.repo_root }}",
+          "command": "git",
+          "args": ["reset", "--hard", "HEAD"],
+          "apply": "{{ input.apply }}"
+        }
+      },
+      {
+        "id": "assert_clean_after_plan",
+        "tool": "mcp_repo",
+        "args": {
+          "action": "assert_clean",
+          "repo_root": "{{ input.repo_root }}"
+        }
+      },
+      {
+        "id": "assert_plan",
+        "tool": "mcp_state",
+        "retry": {
+          "max_attempts": 1,
+          "delay_ms": 0,
+          "until": {
+            "and": [
+              { "path": "result.success", "equals": true },
+              { "path": "steps.preplan_apply_patch.success", "equals": true },
+              { "path": "steps.plan.success", "equals": true }
+            ]
+          }
+        },
+        "args": {
+          "action": "dump",
+          "scope": "session"
+        }
+      },
+      {
+        "id": "propose",
+        "tool": "mcp_workspace",
+        "args": {
+          "action": "run",
+          "intent_type": "gitops.propose",
+          "apply": "{{ input.apply }}",
+          "repo_root": "{{ input.repo_root }}",
+          "inputs": {
+            "project_name": "{{ ?input.project_name }}",
+            "target_name": "{{ ?input.target_name }}",
+            "policy": "{{ ?input.policy }}",
+            "patch": "{{ input.patch }}",
+            "message": "{{ input.message }}",
+            "title": "{{ ?input.title }}",
+            "body": "{{ ?input.body }}",
+            "remote": "{{ ?input.remote }}",
+            "branch_prefix": "{{ ?input.branch_prefix }}",
+            "base_branch": "{{ ?input.base_branch }}",
+            "github_api_base_url": "{{ ?input.github_api_base_url }}",
+            "gitlab_api_base_url": "{{ ?input.gitlab_api_base_url }}",
+            "wait_for_checks": "{{ ?input.wait_for_checks }}",
+            "checks_max_attempts": "{{ ?input.checks_max_attempts }}",
+            "checks_delay_ms": "{{ ?input.checks_delay_ms }}",
+            "merge": "{{ ?input.merge }}",
+            "merge_method": "{{ ?input.merge_method }}"
+          }
+        }
+      },
+      {
+        "id": "sync",
+        "tool": "mcp_workspace",
+        "args": {
+          "action": "run",
+          "intent_type": "gitops.sync",
+          "apply": "{{ input.apply }}",
+          "repo_root": "{{ input.repo_root }}",
+          "inputs": {
+            "project_name": "{{ ?input.project_name }}",
+            "target_name": "{{ ?input.target_name }}",
+            "policy": "{{ ?input.policy }}",
+            "kubeconfig": "{{ input.kubeconfig }}",
+            "namespace": "{{ ?input.namespace }}",
+            "app_name": "{{ ?input.app_name }}",
+            "kustomization_name": "{{ ?input.kustomization_name }}",
+            "wait": "{{ input.wait }}",
+            "max_attempts": "{{ input.max_attempts }}",
+            "delay_ms": "{{ input.delay_ms }}"
+          }
+        }
+      },
+      {
+        "id": "verify",
+        "tool": "mcp_workspace",
+        "args": {
+          "action": "run",
+          "intent_type": "gitops.verify",
+          "repo_root": "{{ input.repo_root }}",
+          "inputs": {
+            "project_name": "{{ ?input.project_name }}",
+            "target_name": "{{ ?input.target_name }}",
+            "policy": "{{ ?input.policy }}",
+            "kubeconfig": "{{ input.kubeconfig }}",
+            "namespace": "{{ ?input.namespace }}",
+            "app_name": "{{ ?input.app_name }}",
+            "kustomization_name": "{{ ?input.kustomization_name }}",
+            "prometheus_base_url": "{{ ?input.prometheus_base_url }}",
+            "prometheus_query": "{{ ?input.prometheus_query }}",
+            "prometheus_max_value": "{{ ?input.prometheus_max_value }}",
+            "metrics_max_attempts": "{{ input.metrics_max_attempts }}",
+            "metrics_delay_ms": "{{ input.metrics_delay_ms }}",
+            "max_attempts": "{{ input.max_attempts }}",
+            "delay_ms": "{{ input.delay_ms }}"
+          }
+        }
+      },
+      {
+        "id": "mark_verified",
+        "tool": "mcp_state",
+        "when": { "path": "steps.verify.success", "equals": true },
+        "args": {
+          "action": "set",
+          "scope": "session",
+          "key": "gitops.release.verified.{{ trace_id }}",
+          "value": true
+        }
+      },
+      {
+        "id": "rollback",
+        "tool": "mcp_workspace",
+        "when": { "not": { "path": "steps.verify.success", "equals": true } },
+        "args": {
+          "action": "run",
+          "intent_type": "gitops.rollback",
+          "apply": "{{ input.apply }}",
+          "repo_root": "{{ input.repo_root }}",
+          "inputs": {
+            "project_name": "{{ ?input.project_name }}",
+            "target_name": "{{ ?input.target_name }}",
+            "policy": "{{ ?input.policy }}",
+            "kubeconfig": "{{ input.kubeconfig }}",
+            "namespace": "{{ ?input.namespace }}",
+            "app_name": "{{ ?input.app_name }}",
+            "kustomization_name": "{{ ?input.kustomization_name }}",
+            "remote": "{{ ?input.remote }}",
+            "base_branch": "{{ ?input.base_branch }}",
+            "revert_sha": "{{ ?input.revert_sha }}",
+            "wait": "{{ input.wait }}",
+            "max_attempts": "{{ input.max_attempts }}",
+            "delay_ms": "{{ input.delay_ms }}"
+          }
+        }
+      },
+      {
+        "id": "assert_verified",
+        "tool": "mcp_state",
+        "args": {
+          "action": "get",
+          "scope": "session",
+          "key": "gitops.release.verified.{{ trace_id }}",
+          "output": { "path": "value" }
+        }
+      }
+    ]
+  },
+  "registry.tags.list": {
+    "description": "List repository tags via registry API.",
+    "tags": ["registry", "api", "read"],
+    "inputs": ["project_name", "target_name", "base_url", "repo"],
+    "steps": [
+      {
+        "id": "tags",
+        "tool": "mcp_api_client",
+        "args": {
+          "action": "request",
+          "method": "GET",
+          "project": "{{ ?input.project_name }}",
+          "target": "{{ ?input.target_name }}",
+          "base_url": "{{ ?input.base_url }}",
+          "path": "/v2/{{ input.repo }}/tags/list"
+        }
+      }
+    ]
+  },
+  "repo.snapshot": {
+    "description": "Fast repository context: root, branch, status, recent commits, diffstat.",
+    "tags": ["repo", "git", "read"],
+    "inputs": ["repo_path"],
+    "steps": [
+      {
+        "id": "root",
+        "tool": "mcp_local",
+        "args": {
+          "action": "exec",
+          "command": "git",
+          "args": ["rev-parse", "--show-toplevel"],
+          "cwd": "{{ ?input.repo_path }}",
+          "inline": true
+        }
+      },
+      {
+        "id": "branch",
+        "tool": "mcp_local",
+        "args": {
+          "action": "exec",
+          "command": "git",
+          "args": ["branch", "--show-current"],
+          "cwd": "{{ steps.root.stdout }}",
+          "inline": true
+        }
+      },
+      {
+        "id": "status",
+        "tool": "mcp_local",
+        "args": {
+          "action": "exec",
+          "command": "git",
+          "args": ["status", "--short"],
+          "cwd": "{{ steps.root.stdout }}",
+          "inline": true
+        }
+      },
+      {
+        "id": "diffstat",
+        "tool": "mcp_local",
+        "args": {
+          "action": "exec",
+          "command": "git",
+          "args": ["diff", "--stat"],
+          "cwd": "{{ steps.root.stdout }}",
+          "inline": true
+        }
+      },
+      {
+        "id": "recent",
+        "tool": "mcp_local",
+        "args": {
+          "action": "exec",
+          "command": "git",
+          "args": ["log", "-5", "--oneline"],
+          "cwd": "{{ steps.root.stdout }}",
+          "inline": true
+        }
+      }
+    ]
+  },
+  "ssh.system_info": {
+    "description": "Remote system snapshot via SSH.",
+    "tags": ["ssh", "read"],
+    "inputs": ["project_name", "target_name"],
+    "steps": [
+      {
+        "id": "info",
+        "tool": "mcp_ssh_manager",
+        "args": {
+          "action": "system_info",
+          "project": "{{ input.project_name }}",
+          "target": "{{ input.target_name }}"
+        }
+      }
+    ]
+  },
+  "ssh.health": {
+    "description": "Quick SSH reachability check.",
+    "tags": ["ssh", "read"],
+    "inputs": ["project_name", "target_name"],
+    "steps": [
+      {
+        "id": "check",
+        "tool": "mcp_ssh_manager",
+        "args": {
+          "action": "check_host",
+          "project": "{{ input.project_name }}",
+          "target": "{{ input.target_name }}"
+        }
+      }
+    ]
+  },
+  "api.check": {
+    "description": "API health check.",
+    "tags": ["api", "read"],
+    "inputs": ["project_name", "target_name", "base_url", "path"],
+    "steps": [
+      {
+        "id": "check",
+        "tool": "mcp_api_client",
+        "args": {
+          "action": "check",
+          "project": "{{ input.project_name }}",
+          "target": "{{ input.target_name }}",
+          "base_url": "{{ ?input.base_url }}",
+          "path": "{{ input.path }}"
+        }
+      }
+    ]
+  },
+  "preflight.k8s": {
+    "description": "Preflight kubectl + kubeconfig connectivity check.",
+    "tags": ["k8s", "diagnostic", "read"],
+    "inputs": ["kubeconfig", "namespace"],
+    "steps": [
+      {
+        "id": "kubectl_version",
+        "tool": "mcp_local",
+        "args": {
+          "action": "exec",
+          "command": "kubectl",
+          "args": ["version", "--short"],
+          "env": {
+            "KUBECONFIG": "{{ ?input.kubeconfig }}"
+          },
+          "inline": true
+        }
+      },
+      {
+        "id": "cluster_access",
+        "tool": "mcp_local",
+        "args": {
+          "action": "exec",
+          "command": "kubectl",
+          "args": ["get", "ns", "--request-timeout=5s"],
+          "env": {
+            "KUBECONFIG": "{{ ?input.kubeconfig }}"
+          },
+          "inline": true
+        }
+      }
+    ]
+  },
+  "preflight.ssh": {
+    "description": "Preflight SSH connectivity and auth.",
+    "tags": ["ssh", "diagnostic", "read"],
+    "inputs": ["project_name", "target_name"],
+    "steps": [
+      {
+        "id": "check",
+        "tool": "mcp_ssh_manager",
+        "args": {
+          "action": "check_host",
+          "project": "{{ input.project_name }}",
+          "target": "{{ input.target_name }}"
+        }
+      }
+    ]
+  },
+  "preflight.node": {
+    "description": "Preflight Node.js and pnpm versions for repo.",
+    "tags": ["node", "diagnostic", "read"],
+    "inputs": ["repo_path"],
+    "steps": [
+      {
+        "id": "node_version",
+        "tool": "mcp_local",
+        "args": {
+          "action": "exec",
+          "command": "node",
+          "args": ["-v"],
+          "cwd": "{{ ?input.repo_path }}",
+          "inline": true
+        }
+      },
+      {
+        "id": "pnpm_version",
+        "tool": "mcp_local",
+        "continue_on_error": true,
+        "args": {
+          "action": "exec",
+          "command": "pnpm",
+          "args": ["-v"],
+          "cwd": "{{ ?input.repo_path }}",
+          "inline": true
+        }
+      },
+      {
+        "id": "node_engine",
+        "tool": "mcp_local",
+        "continue_on_error": true,
+        "args": {
+          "action": "exec",
+          "command": "node",
+          "args": [
+            "-e",
+            "const fs=require('fs');const p=require('path');const file=p.join(process.cwd(),'package.json');if(fs.existsSync(file)){const pkg=require(file);console.log(pkg.engines?.node||'');}"
+          ],
+          "cwd": "{{ ?input.repo_path }}",
+          "inline": true
+        }
+      }
+    ]
+  }
+}

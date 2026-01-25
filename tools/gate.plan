@@ -1,0 +1,7 @@
+# SentryFrogg MCP (Rust) — gate.plan
+# Lines are executed in a shell, in order (after foundation checks).
+
+cargo fmt -- --check
+cargo clippy --all-targets --all-features -- -D warnings
+cargo test
+

@@ -1,0 +1,384 @@
+{
+  "docs": [
+    {
+      "kind": "context",
+      "path": "ARCHITECTURE.md"
+    },
+    {
+      "kind": "context",
+      "path": "GOALS.md"
+    },
+    {
+      "kind": "context",
+      "path": "MAP.md"
+    },
+    {
+      "kind": "context",
+      "path": "PHILOSOPHY.md"
+    },
+    {
+      "kind": "contract",
+      "path": "docs/contracts/cognition_v1.md"
+    },
+    {
+      "kind": "contract",
+      "path": "docs/contracts/docs_format_v1.md"
+    },
+    {
+      "kind": "contract",
+      "path": "docs/contracts/event_log_v1.md"
+    },
+    {
+      "kind": "contract",
+      "path": "docs/contracts/orchestration_v1.md"
+    },
+    {
+      "kind": "contract",
+      "path": "docs/contracts/policy_v1.md"
+    },
+    {
+      "kind": "contract",
+      "path": "docs/contracts/team_cognition_v1.md"
+    },
+    {
+      "kind": "contract",
+      "path": "docs/contracts/tool_bus_v1.md"
+    },
+    {
+      "kind": "contract",
+      "path": "docs/contracts/ui_recipe_v1.md"
+    },
+    {
+      "kind": "contract",
+      "path": "docs/contracts/workflow_v1.md"
+    },
+    {
+      "kind": "contracts-meta",
+      "path": "docs/contracts/CONTRACT_STANDARD.md"
+    },
+    {
+      "kind": "contracts-meta",
+      "path": "docs/contracts/README.md"
+    },
+    {
+      "kind": "doc",
+      "path": "docs/AGENT_PLAYBOOK.md"
+    },
+    {
+      "kind": "doc",
+      "path": "docs/DOC_STYLE.md"
+    },
+    {
+      "kind": "legend",
+      "path": "LEGEND.md"
+    }
+  ],
+  "generated_at_utc": "2026-01-23T20:37:26+00:00",
+  "refs": {
+    "ARCHITECTURE.md": [
+      "BOUNDARY"
+    ],
+    "GOALS.md": [
+      "GOAL",
+      "NON_GOAL"
+    ],
+    "LEGEND.md": [],
+    "MAP.md": [
+      "ENTRYPOINTS"
+    ],
+    "PHILOSOPHY.md": [
+      "PRINCIPLE"
+    ],
+    "docs/AGENT_PLAYBOOK.md": [
+      "GOLDEN_PATH"
+    ],
+    "docs/DOC_STYLE.md": [
+      "CONTEXT_DOC",
+      "NO_SHADOWING"
+    ],
+    "docs/contracts/CONTRACT_STANDARD.md": [
+      "REQUIRED_SECTIONS",
+      "VERSION"
+    ],
+    "docs/contracts/README.md": [],
+    "docs/contracts/cognition_v1.md": [
+      "COGNITION"
+    ],
+    "docs/contracts/docs_format_v1.md": [
+      "DOC_FORMAT"
+    ],
+    "docs/contracts/event_log_v1.md": [
+      "EVENT_LOG"
+    ],
+    "docs/contracts/orchestration_v1.md": [
+      "ORCHESTRATION"
+    ],
+    "docs/contracts/policy_v1.md": [
+      "POLICY"
+    ],
+    "docs/contracts/team_cognition_v1.md": [
+      "TEAM_COGNITION"
+    ],
+    "docs/contracts/tool_bus_v1.md": [
+      "TOOL_BUS"
+    ],
+    "docs/contracts/ui_recipe_v1.md": [
+      "UI_RECIPE"
+    ],
+    "docs/contracts/workflow_v1.md": [
+      "WORKFLOW"
+    ]
+  },
+  "reverse_index": {
+    "BOUNDARY": {
+      "defined_in": "ARCHITECTURE.md",
+      "meaning": "A seam where we define contracts to prevent implicit coupling.",
+      "used_in": [
+        "ARCHITECTURE.md"
+      ]
+    },
+    "CHANGE_PROTOCOL": {
+      "defined_in": "LEGEND.md",
+      "meaning": "The sequence: contracts \u2192 implementation \u2192 tests \u2192 docs.",
+      "used_in": []
+    },
+    "COGNITION": {
+      "defined_in": "docs/contracts/cognition_v1.md",
+      "meaning": "The contract for how reasoning artifacts are stored and linked.",
+      "used_in": [
+        "docs/contracts/cognition_v1.md"
+      ]
+    },
+    "CONTENT_BLOCK": {
+      "defined_in": "LEGEND.md",
+      "meaning": "The `[CONTENT]` block containing the document body.",
+      "used_in": []
+    },
+    "CONTEXT_DOC": {
+      "defined_in": "docs/DOC_STYLE.md",
+      "meaning": "A Markdown doc written as `[LEGEND]` then `[CONTENT]`.",
+      "used_in": [
+        "docs/DOC_STYLE.md"
+      ]
+    },
+    "CONTRACT": {
+      "defined_in": "LEGEND.md",
+      "meaning": "A versioned interface spec with examples.",
+      "used_in": []
+    },
+    "DOCTOR": {
+      "defined_in": "LEGEND.md",
+      "meaning": "A diagnostic checker for environment + repo foundation.",
+      "used_in": []
+    },
+    "DOC_FORMAT": {
+      "defined_in": "LEGEND.md",
+      "meaning": "The canonical doc shape: a `[LEGEND]` block then a `[CONTENT]` block.",
+      "used_in": [
+        "docs/contracts/docs_format_v1.md"
+      ]
+    },
+    "ENTRYPOINTS": {
+      "defined_in": "MAP.md",
+      "meaning": "The minimal set of docs that explain \u201chow this repo works\u201d.",
+      "used_in": [
+        "MAP.md"
+      ]
+    },
+    "EVENT_LOG": {
+      "defined_in": "docs/contracts/event_log_v1.md",
+      "meaning": "The contract for durable events and their schema/versioning.",
+      "used_in": [
+        "docs/contracts/event_log_v1.md"
+      ]
+    },
+    "GATE": {
+      "defined_in": "LEGEND.md",
+      "meaning": "A deterministic checker that fails closed on drift.",
+      "used_in": []
+    },
+    "GLOBAL_TOKEN": {
+      "defined_in": "LEGEND.md",
+      "meaning": "A token defined in `LEGEND.md`; available repo-wide.",
+      "used_in": []
+    },
+    "GOAL": {
+      "defined_in": "GOALS.md",
+      "meaning": "A desired long-term property of the system.",
+      "used_in": [
+        "GOALS.md"
+      ]
+    },
+    "GOLDEN_PATH": {
+      "defined_in": "docs/AGENT_PLAYBOOK.md",
+      "meaning": "The recommended sequence that keeps work safe and deterministic.",
+      "used_in": [
+        "docs/AGENT_PLAYBOOK.md"
+      ]
+    },
+    "LEGEND_BLOCK": {
+      "defined_in": "LEGEND.md",
+      "meaning": "The `[LEGEND]` block containing definitions.",
+      "used_in": []
+    },
+    "LOCAL_TOKEN": {
+      "defined_in": "LEGEND.md",
+      "meaning": "A token defined in a specific doc; scoped to that doc.",
+      "used_in": []
+    },
+    "NON_GOAL": {
+      "defined_in": "GOALS.md",
+      "meaning": "An explicit \u201cwe are not doing this\u201d.",
+      "used_in": [
+        "GOALS.md"
+      ]
+    },
+    "NO_SHADOWING": {
+      "defined_in": "LEGEND.md",
+      "meaning": "Rule: a doc must not redefine a global token locally.",
+      "used_in": [
+        "docs/DOC_STYLE.md"
+      ]
+    },
+    "ORCHESTRATION": {
+      "defined_in": "docs/contracts/orchestration_v1.md",
+      "meaning": "The contract for multi-step workflows and execution semantics.",
+      "used_in": [
+        "docs/contracts/orchestration_v1.md"
+      ]
+    },
+    "POLICY": {
+      "defined_in": "docs/contracts/policy_v1.md",
+      "meaning": "A rule set that constrains agent behavior.",
+      "used_in": [
+        "docs/contracts/policy_v1.md"
+      ]
+    },
+    "PRINCIPLE": {
+      "defined_in": "PHILOSOPHY.md",
+      "meaning": "A durable rule that trades off local optimization for global clarity.",
+      "used_in": [
+        "PHILOSOPHY.md"
+      ]
+    },
+    "REQUIRED_SECTIONS": {
+      "defined_in": "docs/contracts/CONTRACT_STANDARD.md",
+      "meaning": "The required headings every contract must include.",
+      "used_in": [
+        "docs/contracts/CONTRACT_STANDARD.md"
+      ]
+    },
+    "TEAM_COGNITION": {
+      "defined_in": "docs/contracts/team_cognition_v1.md",
+      "meaning": "The contract for multi-agent coordination and shared context.",
+      "used_in": [
+        "docs/contracts/team_cognition_v1.md"
+      ]
+    },
+    "TOKEN": {
+      "defined_in": "LEGEND.md",
+      "meaning": "A named meaning reused across docs.",
+      "used_in": []
+    },
+    "TOKEN_REF": {
+      "defined_in": "LEGEND.md",
+      "meaning": "A reference in content like `[TOKEN]` (optionally `[TOKEN|LEGEND.md]`).",
+      "used_in": []
+    },
+    "TOOL_BUS": {
+      "defined_in": "docs/contracts/tool_bus_v1.md",
+      "meaning": "The contract for how tools are invoked and reported.",
+      "used_in": [
+        "docs/contracts/tool_bus_v1.md"
+      ]
+    },
+    "UI_RECIPE": {
+      "defined_in": "docs/contracts/ui_recipe_v1.md",
+      "meaning": "The contract for UI flows and acceptance checks.",
+      "used_in": [
+        "docs/contracts/ui_recipe_v1.md"
+      ]
+    },
+    "VERSION": {
+      "defined_in": "docs/contracts/CONTRACT_STANDARD.md",
+      "meaning": "A stable identifier (v1, v2, \u2026) for a contract.",
+      "used_in": [
+        "docs/contracts/CONTRACT_STANDARD.md"
+      ]
+    },
+    "WORKFLOW": {
+      "defined_in": "docs/contracts/workflow_v1.md",
+      "meaning": "The contract for recurring engineering workflows and gates.",
+      "used_in": [
+        "docs/contracts/workflow_v1.md"
+      ]
+    }
+  },
+  "tokens_global": {
+    "CHANGE_PROTOCOL": "The sequence: contracts \u2192 implementation \u2192 tests \u2192 docs.",
+    "CONTENT_BLOCK": "The `[CONTENT]` block containing the document body.",
+    "CONTRACT": "A versioned interface spec with examples.",
+    "DOCTOR": "A diagnostic checker for environment + repo foundation.",
+    "DOC_FORMAT": "The canonical doc shape: a `[LEGEND]` block then a `[CONTENT]` block.",
+    "GATE": "A deterministic checker that fails closed on drift.",
+    "GLOBAL_TOKEN": "A token defined in `LEGEND.md`; available repo-wide.",
+    "LEGEND_BLOCK": "The `[LEGEND]` block containing definitions.",
+    "LOCAL_TOKEN": "A token defined in a specific doc; scoped to that doc.",
+    "NO_SHADOWING": "Rule: a doc must not redefine a global token locally.",
+    "TOKEN": "A named meaning reused across docs.",
+    "TOKEN_REF": "A reference in content like `[TOKEN]` (optionally `[TOKEN|LEGEND.md]`)."
+  },
+  "tokens_local": {
+    "ARCHITECTURE.md": {
+      "BOUNDARY": "A seam where we define contracts to prevent implicit coupling."
+    },
+    "GOALS.md": {
+      "GOAL": "A desired long-term property of the system.",
+      "NON_GOAL": "An explicit \u201cwe are not doing this\u201d."
+    },
+    "LEGEND.md": {},
+    "MAP.md": {
+      "ENTRYPOINTS": "The minimal set of docs that explain \u201chow this repo works\u201d."
+    },
+    "PHILOSOPHY.md": {
+      "PRINCIPLE": "A durable rule that trades off local optimization for global clarity."
+    },
+    "docs/AGENT_PLAYBOOK.md": {
+      "GOLDEN_PATH": "The recommended sequence that keeps work safe and deterministic."
+    },
+    "docs/DOC_STYLE.md": {
+      "CONTEXT_DOC": "A Markdown doc written as `[LEGEND]` then `[CONTENT]`."
+    },
+    "docs/contracts/CONTRACT_STANDARD.md": {
+      "REQUIRED_SECTIONS": "The required headings every contract must include.",
+      "VERSION": "A stable identifier (v1, v2, \u2026) for a contract."
+    },
+    "docs/contracts/README.md": {},
+    "docs/contracts/cognition_v1.md": {
+      "COGNITION": "The contract for how reasoning artifacts are stored and linked."
+    },
+    "docs/contracts/docs_format_v1.md": {},
+    "docs/contracts/event_log_v1.md": {
+      "EVENT_LOG": "The contract for durable events and their schema/versioning."
+    },
+    "docs/contracts/orchestration_v1.md": {
+      "ORCHESTRATION": "The contract for multi-step workflows and execution semantics."
+    },
+    "docs/contracts/policy_v1.md": {
+      "POLICY": "A rule set that constrains agent behavior."
+    },
+    "docs/contracts/team_cognition_v1.md": {
+      "TEAM_COGNITION": "The contract for multi-agent coordination and shared context."
+    },
+    "docs/contracts/tool_bus_v1.md": {
+      "TOOL_BUS": "The contract for how tools are invoked and reported."
+    },
+    "docs/contracts/ui_recipe_v1.md": {
+      "UI_RECIPE": "The contract for UI flows and acceptance checks."
+    },
+    "docs/contracts/workflow_v1.md": {
+      "WORKFLOW": "The contract for recurring engineering workflows and gates."
+    }
+  },
+  "version": 1
+}
