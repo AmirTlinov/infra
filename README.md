@@ -1,75 +1,58 @@
 # Infra
 
-Infra is a **stdio MCP server** that exposes ops-grade tools to AI agents:
-SSH, HTTP client, Postgres, runbooks, pipelines, intents, artifacts, state, and more.
+Infra — production‑grade stdio MCP‑сервер для операционных задач AI‑агентов: SSH, HTTP‑клиент, Postgres, runbooks, pipelines, intents, artifacts, audit и state.
 
-This repository is the Rust implementation, optimized for:
-- High throughput + low overhead
-- Deterministic agent-friendly interfaces
-- Fail-closed development gates + AI-native documentation
+## Для кого
+- Команды, которым нужны безопасные и воспроизводимые ops‑действия через MCP.
+- AI‑агенты, которым нужен единый, быстрый и детерминированный интерфейс к инфраструктуре.
 
-## Quick start (dev)
+## Что внутри
+- **Ops‑инструменты**: SSH/API/SQL/Repo/Pipelines.
+- **Runbooks/Intents**: оркестрация многошаговых действий.
+- **Audit/Evidence**: следы выполнения и артефакты для отладки.
+- **DX**: строгие схемы, алиасы действий, фильтры списка, читаемые ошибки.
 
-1) Diagnose:
+## Быстрый старт (локально)
+1) Диагностика:
 
 `./tools/doctor`
 
-2) Run all gates (fmt + clippy + tests):
+2) Гейты качества (fmt + clippy + tests):
 
 `./tools/gate`
 
-## AI DX
-
-- Common action aliases are accepted (list/get/delete/run/upsert/use), normalized server-side.
-- List actions support limit/offset/query/where; tag filters for runbooks + capabilities; list responses include meta.
-- `help` now surfaces action aliases and concrete examples.
-
-## Docs
-
-- `mcp_config.md` (MCP client configuration)
-- `docs/INTEGRATION.md` (integration smoke and local stack)
-- `SECURITY.md` (vulnerability reporting)
-- `PUBLIC_RELEASE_CHECKLIST.md` (release hygiene)
-
-## Parity (TS → Rust)
-
-If you still have the legacy TypeScript repo available locally, you can verify
-deterministic parity between the TS and Rust servers (default `--suite extended`):
-
-`./tools/parity --ts-path /path/to/legacy-ts`
-
-Notes:
-- `./tools/parity` runs both servers with isolated temp state (`MCP_PROFILES_DIR`) and isolated temp context roots (`INFRA_CONTEXT_REPO_ROOT`).
-- Use `--suite core` for a faster “surface sanity check”.
-
-## Smoke (docker)
-
-Optional but high-signal end-to-end smoke (starts ephemeral Postgres + SSH containers, plus a local HTTP server):
-
-`./tools/smoke`
-
-## Run (stdio MCP)
-
-Dev:
-
-`cargo run`
-
-Release:
+3) Запуск MCP‑сервера:
 
 `cargo run --release`
 
-## Key files
+## Рекомендуемая конфигурация (без смешения проектов)
+Чтобы агент не видел runbooks других проектов, изолируй профили:
+- `MCP_PROFILES_DIR=/path/to/project/.infra`
 
-- `src/main.rs`: stdio entrypoint
-- `src/mcp/server.rs`: MCP protocol server + routing
-- `src/app.rs`: wiring (DI) of managers/services
-- `runbooks.json`: default runbooks
-- `capabilities.json`: default intent capabilities
-- `tool_catalog.json`: tool catalog (schema-ish)
+Точечные пути при необходимости:
+- `MCP_RUNBOOKS_PATH=/path/to/project/.infra/runbooks.json`
+- `MCP_CAPABILITIES_PATH=/path/to/project/.infra/capabilities.json`
+- `MCP_CONTEXT_REPO_ROOT=/path/to/project/.infra/artifacts`
 
-## Config (high-signal)
+## Примеры запросов
+Список runbooks:
+```
+{"action":"list","query":"k8s","tags":["gitops"],"limit":20}
+```
 
-- `LOG_LEVEL=debug` enables debug logs
-- `MCP_PROFILES_DIR=...` isolates all local state/config into a directory
-- `INFRA_UNSAFE_LOCAL=1` enables `mcp_local` (disabled by default)
-- `INFRA_ALLOW_SECRET_EXPORT=1` allows `include_secrets=true` on profile export actions
+Запуск runbook:
+```
+{"action":"run","name":"k8s.diff","input":{"overlay":"./overlays/dev"}}
+```
+
+## Документация
+- `mcp_config.md` — конфиг MCP‑клиента
+- `docs/INTEGRATION.md` — интеграционные проверки
+- `docs/RUNBOOK.md` — гайды по runbooks
+- `SECURITY.md` — безопасность
+- `PUBLIC_RELEASE_CHECKLIST.md` — релиз‑гигиена
+
+## Ключевые файлы
+- `src/main.rs` — stdio entrypoint
+- `src/mcp/server.rs` — MCP routing
+- `src/app.rs` — wiring (DI)
