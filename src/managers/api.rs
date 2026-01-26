@@ -2119,7 +2119,7 @@ fn merge_headers(
     let mut merged = HashMap::new();
     merged.insert(
         "User-Agent".to_string(),
-        "infra-api-client/7.0.1".to_string(),
+        "infra-api-client/7.1.0".to_string(),
     );
     merged.insert(
         "Accept".to_string(),
