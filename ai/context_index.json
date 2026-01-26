@@ -73,34 +73,29 @@
       "path": "LEGEND.md"
     }
   ],
-  "generated_at_utc": "2026-01-23T20:37:26+00:00",
+  "generated_at_utc": "2026-01-26T04:27:06+00:00",
   "refs": {
     "ARCHITECTURE.md": [
-      "BOUNDARY"
+      "APP_WIRING",
+      "BOUNDARY",
+      "ENTRYPOINT",
+      "INTENT_ENGINE",
+      "MCP_SERVER",
+      "PIPELINE_ENGINE",
+      "RUNBOOK_ENGINE",
+      "TOOL_EXECUTOR"
     ],
     "GOALS.md": [
       "GOAL",
       "NON_GOAL"
     ],
-    "LEGEND.md": [],
     "MAP.md": [
       "ENTRYPOINTS"
     ],
     "PHILOSOPHY.md": [
-      "PRINCIPLE"
+      "PRINCIPLE",
+      "TOOL_EXECUTOR"
     ],
-    "docs/AGENT_PLAYBOOK.md": [
-      "GOLDEN_PATH"
-    ],
-    "docs/DOC_STYLE.md": [
-      "CONTEXT_DOC",
-      "NO_SHADOWING"
-    ],
-    "docs/contracts/CONTRACT_STANDARD.md": [
-      "REQUIRED_SECTIONS",
-      "VERSION"
-    ],
-    "docs/contracts/README.md": [],
     "docs/contracts/cognition_v1.md": [
       "COGNITION"
     ],
@@ -120,6 +115,9 @@
       "TEAM_COGNITION"
     ],
     "docs/contracts/tool_bus_v1.md": [
+      "ENVELOPE",
+      "MCP_JSONRPC",
+      "NOTIFICATION",
       "TOOL_BUS"
     ],
     "docs/contracts/ui_recipe_v1.md": [
@@ -127,11 +125,41 @@
     ],
     "docs/contracts/workflow_v1.md": [
       "WORKFLOW"
-    ]
+    ],
+    "docs/contracts/CONTRACT_STANDARD.md": [
+      "REQUIRED_SECTIONS",
+      "VERSION"
+    ],
+    "docs/contracts/README.md": [],
+    "docs/AGENT_PLAYBOOK.md": [
+      "ADD_TOOL",
+      "CHANGE_PROTOCOL",
+      "GATE",
+      "GOLDEN_PATH"
+    ],
+    "docs/DOC_STYLE.md": [
+      "CONTEXT_DOC",
+      "NO_SHADOWING"
+    ],
+    "LEGEND.md": []
   },
   "reverse_index": {
+    "ADD_TOOL": {
+      "defined_in": "docs/AGENT_PLAYBOOK.md",
+      "meaning": "The safe workflow for adding a new tool handler.",
+      "used_in": [
+        "docs/AGENT_PLAYBOOK.md"
+      ]
+    },
+    "APP_WIRING": {
+      "defined_in": "LEGEND.md",
+      "meaning": "The dependency graph assembly (construct services/managers, connect them).",
+      "used_in": [
+        "ARCHITECTURE.md"
+      ]
+    },
     "BOUNDARY": {
-      "defined_in": "ARCHITECTURE.md",
+      "defined_in": "LEGEND.md",
       "meaning": "A seam where we define contracts to prevent implicit coupling.",
       "used_in": [
         "ARCHITECTURE.md"
@@ -140,7 +168,9 @@
     "CHANGE_PROTOCOL": {
       "defined_in": "LEGEND.md",
       "meaning": "The sequence: contracts \u2192 implementation \u2192 tests \u2192 docs.",
-      "used_in": []
+      "used_in": [
+        "docs/AGENT_PLAYBOOK.md"
+      ]
     },
     "COGNITION": {
       "defined_in": "docs/contracts/cognition_v1.md",
@@ -178,11 +208,25 @@
         "docs/contracts/docs_format_v1.md"
       ]
     },
+    "ENTRYPOINT": {
+      "defined_in": "LEGEND.md",
+      "meaning": "The process entry that starts the stdio MCP server.",
+      "used_in": [
+        "ARCHITECTURE.md"
+      ]
+    },
     "ENTRYPOINTS": {
       "defined_in": "MAP.md",
       "meaning": "The minimal set of docs that explain \u201chow this repo works\u201d.",
       "used_in": [
         "MAP.md"
+      ]
+    },
+    "ENVELOPE": {
+      "defined_in": "docs/contracts/tool_bus_v1.md",
+      "meaning": "The strict JSON object returned inside `tools/call` text output.",
+      "used_in": [
+        "docs/contracts/tool_bus_v1.md"
       ]
     },
     "EVENT_LOG": {
@@ -195,7 +239,9 @@
     "GATE": {
       "defined_in": "LEGEND.md",
       "meaning": "A deterministic checker that fails closed on drift.",
-      "used_in": []
+      "used_in": [
+        "docs/AGENT_PLAYBOOK.md"
+      ]
     },
     "GLOBAL_TOKEN": {
       "defined_in": "LEGEND.md",
@@ -216,6 +262,13 @@
         "docs/AGENT_PLAYBOOK.md"
       ]
     },
+    "INTENT_ENGINE": {
+      "defined_in": "LEGEND.md",
+      "meaning": "The intent compiler/executor that maps an intent type to a runbook plan.",
+      "used_in": [
+        "ARCHITECTURE.md"
+      ]
+    },
     "LEGEND_BLOCK": {
       "defined_in": "LEGEND.md",
       "meaning": "The `[LEGEND]` block containing definitions.",
@@ -226,11 +279,37 @@
       "meaning": "A token defined in a specific doc; scoped to that doc.",
       "used_in": []
     },
+    "MANAGER": {
+      "defined_in": "LEGEND.md",
+      "meaning": "A tool-facing handler (implements ToolHandler; validates args; orchestrates services).",
+      "used_in": []
+    },
+    "MCP_JSONRPC": {
+      "defined_in": "docs/contracts/tool_bus_v1.md",
+      "meaning": "MCP transport shape over JSON-RPC 2.0 on stdio.",
+      "used_in": [
+        "docs/contracts/tool_bus_v1.md"
+      ]
+    },
+    "MCP_SERVER": {
+      "defined_in": "LEGEND.md",
+      "meaning": "The stdio server that parses requests and routes tool calls.",
+      "used_in": [
+        "ARCHITECTURE.md"
+      ]
+    },
     "NON_GOAL": {
       "defined_in": "GOALS.md",
       "meaning": "An explicit \u201cwe are not doing this\u201d.",
       "used_in": [
         "GOALS.md"
+      ]
+    },
+    "NOTIFICATION": {
+      "defined_in": "docs/contracts/tool_bus_v1.md",
+      "meaning": "A JSON-RPC message without an `id` (no response expected).",
+      "used_in": [
+        "docs/contracts/tool_bus_v1.md"
       ]
     },
     "NO_SHADOWING": {
@@ -245,6 +324,13 @@
       "meaning": "The contract for multi-step workflows and execution semantics.",
       "used_in": [
         "docs/contracts/orchestration_v1.md"
+      ]
+    },
+    "PIPELINE_ENGINE": {
+      "defined_in": "LEGEND.md",
+      "meaning": "The streaming data mover between HTTP/SFTP/Postgres with optional artifact capture.",
+      "used_in": [
+        "ARCHITECTURE.md"
       ]
     },
     "POLICY": {
@@ -267,6 +353,18 @@
       "used_in": [
         "docs/contracts/CONTRACT_STANDARD.md"
       ]
+    },
+    "RUNBOOK_ENGINE": {
+      "defined_in": "LEGEND.md",
+      "meaning": "The runbook runner that executes a sequence of tool calls with templating and state.",
+      "used_in": [
+        "ARCHITECTURE.md"
+      ]
+    },
+    "SERVICE": {
+      "defined_in": "LEGEND.md",
+      "meaning": "A stateful or reusable component (profiles/state/policy/cache/etc).",
+      "used_in": []
     },
     "TEAM_COGNITION": {
       "defined_in": "docs/contracts/team_cognition_v1.md",
@@ -292,6 +390,14 @@
         "docs/contracts/tool_bus_v1.md"
       ]
     },
+    "TOOL_EXECUTOR": {
+      "defined_in": "LEGEND.md",
+      "meaning": "The core dispatcher: resolves aliases/presets, executes tools, wraps results, audits.",
+      "used_in": [
+        "ARCHITECTURE.md",
+        "PHILOSOPHY.md"
+      ]
+    },
     "UI_RECIPE": {
       "defined_in": "docs/contracts/ui_recipe_v1.md",
       "meaning": "The contract for UI flows and acceptance checks.",
@@ -312,72 +418,6 @@
       "used_in": [
         "docs/contracts/workflow_v1.md"
       ]
-    }
-  },
-  "tokens_global": {
-    "CHANGE_PROTOCOL": "The sequence: contracts \u2192 implementation \u2192 tests \u2192 docs.",
-    "CONTENT_BLOCK": "The `[CONTENT]` block containing the document body.",
-    "CONTRACT": "A versioned interface spec with examples.",
-    "DOCTOR": "A diagnostic checker for environment + repo foundation.",
-    "DOC_FORMAT": "The canonical doc shape: a `[LEGEND]` block then a `[CONTENT]` block.",
-    "GATE": "A deterministic checker that fails closed on drift.",
-    "GLOBAL_TOKEN": "A token defined in `LEGEND.md`; available repo-wide.",
-    "LEGEND_BLOCK": "The `[LEGEND]` block containing definitions.",
-    "LOCAL_TOKEN": "A token defined in a specific doc; scoped to that doc.",
-    "NO_SHADOWING": "Rule: a doc must not redefine a global token locally.",
-    "TOKEN": "A named meaning reused across docs.",
-    "TOKEN_REF": "A reference in content like `[TOKEN]` (optionally `[TOKEN|LEGEND.md]`)."
-  },
-  "tokens_local": {
-    "ARCHITECTURE.md": {
-      "BOUNDARY": "A seam where we define contracts to prevent implicit coupling."
-    },
-    "GOALS.md": {
-      "GOAL": "A desired long-term property of the system.",
-      "NON_GOAL": "An explicit \u201cwe are not doing this\u201d."
-    },
-    "LEGEND.md": {},
-    "MAP.md": {
-      "ENTRYPOINTS": "The minimal set of docs that explain \u201chow this repo works\u201d."
-    },
-    "PHILOSOPHY.md": {
-      "PRINCIPLE": "A durable rule that trades off local optimization for global clarity."
-    },
-    "docs/AGENT_PLAYBOOK.md": {
-      "GOLDEN_PATH": "The recommended sequence that keeps work safe and deterministic."
-    },
-    "docs/DOC_STYLE.md": {
-      "CONTEXT_DOC": "A Markdown doc written as `[LEGEND]` then `[CONTENT]`."
-    },
-    "docs/contracts/CONTRACT_STANDARD.md": {
-      "REQUIRED_SECTIONS": "The required headings every contract must include.",
-      "VERSION": "A stable identifier (v1, v2, \u2026) for a contract."
-    },
-    "docs/contracts/README.md": {},
-    "docs/contracts/cognition_v1.md": {
-      "COGNITION": "The contract for how reasoning artifacts are stored and linked."
-    },
-    "docs/contracts/docs_format_v1.md": {},
-    "docs/contracts/event_log_v1.md": {
-      "EVENT_LOG": "The contract for durable events and their schema/versioning."
-    },
-    "docs/contracts/orchestration_v1.md": {
-      "ORCHESTRATION": "The contract for multi-step workflows and execution semantics."
-    },
-    "docs/contracts/policy_v1.md": {
-      "POLICY": "A rule set that constrains agent behavior."
-    },
-    "docs/contracts/team_cognition_v1.md": {
-      "TEAM_COGNITION": "The contract for multi-agent coordination and shared context."
-    },
-    "docs/contracts/tool_bus_v1.md": {
-      "TOOL_BUS": "The contract for how tools are invoked and reported."
-    },
-    "docs/contracts/ui_recipe_v1.md": {
-      "UI_RECIPE": "The contract for UI flows and acceptance checks."
-    },
-    "docs/contracts/workflow_v1.md": {
-      "WORKFLOW": "The contract for recurring engineering workflows and gates."
     }
   },
   "version": 1

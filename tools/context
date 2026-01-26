@@ -1,27 +1,26 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import argparse
 import json
 import re
-import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
 
-def _repo_root() -> Path:
-    return Path(__file__).resolve().parents[1]
-
-
 TOKEN_RE = re.compile(r"^[A-Z][A-Z0-9_/-]*$")
 TOKEN_REF_RE = re.compile(r"\[([^\[\]]+)\]")
-CONTRACT_FILE_RE = re.compile(r"^(?P<stem>.+)_v(?P<ver>[0-9]+)\.md$")
 
 
 @dataclass(frozen=True)
 class DocBlocks:
     legend: str
     content: str
+
+
+def _repo_root() -> Path:
+    return Path(__file__).resolve().parents[1]
 
 
 def _strip_inline_code(text: str) -> str:
@@ -60,222 +59,156 @@ def _parse_blocks(md: str) -> DocBlocks:
     if content_header_idx is None:
         raise ValueError("missing [CONTENT] header")
 
-    # Disallow multiple [CONTENT] headers (outside fences).
-    in_fence = False
-    for j in range(content_header_idx + 1, len(lines)):
-        line = lines[j]
-        if line.strip().startswith("```"):
-            in_fence = not in_fence
-            continue
-        if in_fence:
-            continue
-        if line.strip() == "[CONTENT]":
-            raise ValueError("multiple [CONTENT] headers found; use exactly one")
-
-    legend = "\n".join(lines[legend_start:content_header_idx]).strip("\n")
-    content = "\n".join(lines[content_header_idx + 1 :]).strip("\n")
+    legend = "\n".join(lines[legend_start:content_header_idx])
+    content = "\n".join(lines[content_header_idx + 1 :])
     return DocBlocks(legend=legend, content=content)
 
 
-def _parse_legend_tokens(legend_block: str) -> dict[str, str]:
-    tokens: dict[str, str] = {}
-    for raw in legend_block.splitlines():
+def _parse_legend_defs(legend: str, source: str) -> dict[str, str]:
+    defs: dict[str, str] = {}
+    for raw in legend.splitlines():
         line = raw.strip()
         if not line or line.startswith("#"):
             continue
         if "=" not in line:
-            raise ValueError(f"legend line must be 'TOKEN = Meaning' (got: {raw!r})")
-        left, right = line.split("=", 1)
-        token = left.strip()
-        meaning = right.strip()
-        if not token:
-            raise ValueError(f"empty token in legend line: {raw!r}")
+            continue
+        token, meaning = line.split("=", 1)
+        token = token.strip()
+        meaning = meaning.strip()
         if not TOKEN_RE.match(token):
-            raise ValueError(f"invalid token name: {token!r} (expected uppercase TOKEN like FOO_BAR)")
-        if token in tokens:
-            raise ValueError(f"duplicate token in legend: {token}")
-        tokens[token] = meaning
-    return tokens
+            continue
+        if not meaning:
+            raise ValueError(f"legend token {token} in {source} must have meaning")
+        defs[token] = meaning
+    return defs
 
 
-def _extract_token_refs(content_block: str) -> set[str]:
-    refs: set[str] = set()
+def _parse_content_refs(content: str) -> list[str]:
+    tokens: set[str] = set()
     in_fence = False
-    for raw in content_block.splitlines():
-        line = raw.rstrip("\n")
+    for raw in content.splitlines():
+        line = raw
         if line.strip().startswith("```"):
             in_fence = not in_fence
             continue
         if in_fence:
             continue
         line = _strip_inline_code(line)
-        for inner in TOKEN_REF_RE.findall(line):
-            candidate = inner.strip()
-            if "|" in candidate:
-                token, src = candidate.split("|", 1)
-                token = token.strip()
-                src = src.strip()
-                if src != "LEGEND.md":
-                    continue
-                candidate = token
-            if TOKEN_RE.match(candidate):
-                refs.add(candidate)
-    return refs
+        for hit in TOKEN_REF_RE.findall(line):
+            token = hit.split("|", 1)[0].strip()
+            if TOKEN_RE.match(token):
+                tokens.add(token)
+    return sorted(tokens)
 
 
-def _should_skip_dir(name: str) -> bool:
-    return name in {
-        ".git",
-        ".hg",
-        ".svn",
-        ".venv",
-        "node_modules",
-        "target",
-        "dist",
-        "build",
-        ".next",
-        ".cache",
-        "__pycache__",
+def _doc_entry(kind: str, path: Path, root: Path) -> dict[str, str]:
+    return {"kind": kind, "path": path.relative_to(root).as_posix()}
+
+
+def _collect_docs(root: Path) -> list[dict[str, str]]:
+    docs: list[dict[str, str]] = []
+    context = ["ARCHITECTURE.md", "GOALS.md", "MAP.md", "PHILOSOPHY.md"]
+    for name in context:
+        path = root / name
+        if path.exists():
+            docs.append(_doc_entry("context", path, root))
+
+    contracts_dir = root / "docs" / "contracts"
+    if contracts_dir.exists():
+        for path in sorted(contracts_dir.glob("*_v*.md")):
+            docs.append(_doc_entry("contract", path, root))
+
+    for name in ["CONTRACT_STANDARD.md", "README.md"]:
+        path = contracts_dir / name
+        if path.exists():
+            docs.append(_doc_entry("contracts-meta", path, root))
+
+    for name in ["AGENT_PLAYBOOK.md", "DOC_STYLE.md"]:
+        path = root / "docs" / name
+        if path.exists():
+            docs.append(_doc_entry("doc", path, root))
+
+    legend = root / "LEGEND.md"
+    if legend.exists():
+        docs.append(_doc_entry("legend", legend, root))
+
+    return docs
+
+
+def _load_existing(path: Path) -> dict | None:
+    if not path.exists():
+        return None
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _build_index(root: Path, generated_at: str | None) -> dict:
+    docs = _collect_docs(root)
+    refs: dict[str, list[str]] = {}
+    definitions: dict[str, tuple[str, str]] = {}
+
+    for entry in docs:
+        doc_path = root / entry["path"]
+        blocks = _parse_blocks(doc_path.read_text(encoding="utf-8"))
+        refs[entry["path"]] = _parse_content_refs(blocks.content)
+        for token, meaning in _parse_legend_defs(blocks.legend, entry["path"]).items():
+            if token in definitions:
+                raise ValueError(f"token {token} defined twice ({definitions[token][0]}, {entry['path']})")
+            definitions[token] = (entry["path"], meaning)
+
+    reverse_index: dict[str, dict[str, object]] = {}
+    usage: dict[str, set[str]] = {}
+    for doc_path, tokens in refs.items():
+        for token in tokens:
+            usage.setdefault(token, set()).add(doc_path)
+
+    for token in sorted(definitions.keys()):
+        defined_in, meaning = definitions[token]
+        reverse_index[token] = {
+            "defined_in": defined_in,
+            "meaning": meaning,
+            "used_in": sorted(usage.get(token, set())),
+        }
+
+    index = {
+        "docs": docs,
+        "generated_at_utc": generated_at
+        or datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+        "refs": refs,
+        "reverse_index": reverse_index,
+        "version": 1,
     }
+    return index
 
 
-def _iter_markdown_files(root: Path) -> list[Path]:
-    files: list[Path] = []
-    for path in sorted(root.rglob("*.md")):
-        if any(_should_skip_dir(p) for p in path.parts):
-            continue
-        files.append(path)
-    return files
-
-
-def _is_repo_root_freeform(path: Path, root: Path) -> bool:
-    try:
-        rel = path.relative_to(root)
-    except ValueError:
-        return False
-    if rel.parent != Path("."):
-        return False
-    return rel.name in {"AGENTS.md", "README.md"}
-
-
-def _doc_kind(rel: Path) -> str:
-    if len(rel.parts) >= 3 and rel.parts[0] == "docs" and rel.parts[1] == "contracts":
-        if CONTRACT_FILE_RE.match(rel.name):
-            return "contract"
-        return "contracts-meta"
-    if rel.name == "LEGEND.md":
-        return "legend"
-    if rel.name in {"MAP.md", "PHILOSOPHY.md", "GOALS.md", "ARCHITECTURE.md"}:
-        return "context"
-    if rel.parts and rel.parts[0] == "docs":
-        return "doc"
-    return "doc"
-
-
-def _sorted_dict(d: dict[str, str]) -> dict[str, str]:
-    return {k: d[k] for k in sorted(d.keys())}
+def _same_without_timestamp(a: dict, b: dict) -> bool:
+    a = dict(a)
+    b = dict(b)
+    a.pop("generated_at_utc", None)
+    b.pop("generated_at_utc", None)
+    return a == b
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser(description="Refresh ai/context_index.json")
+    parser.add_argument("--check", action="store_true", help="exit non-zero if changes are needed")
+    args = parser.parse_args()
+
     root = _repo_root()
-    legend_path = root / "LEGEND.md"
-    if not legend_path.exists():
-        print("ERROR: missing LEGEND.md", file=sys.stderr)
-        return 2
+    output_path = root / "ai" / "context_index.json"
+    existing = _load_existing(output_path) or {}
+    generated_at = existing.get("generated_at_utc")
+    index = _build_index(root, generated_at)
 
-    errors: list[str] = []
-    try:
-        global_blocks = _parse_blocks(legend_path.read_text(encoding="utf-8"))
-        global_tokens = _parse_legend_tokens(global_blocks.legend)
-    except Exception as e:
-        print(f"ERROR: LEGEND.md is invalid: {e}", file=sys.stderr)
-        return 2
+    if existing and not _same_without_timestamp(existing, index):
+        index["generated_at_utc"] = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
-    md_files = _iter_markdown_files(root)
-    docs: list[dict[str, str]] = []
-    local_tokens_by_doc: dict[str, dict[str, str]] = {}
-    refs_by_doc: dict[str, list[str]] = {}
+    if args.check:
+        if not existing or not _same_without_timestamp(existing, index):
+            return 2
+        return 0
 
-    for path in md_files:
-        if _is_repo_root_freeform(path, root):
-            continue
-        rel = path.relative_to(root)
-        rel_str = str(rel)
-        docs.append({"path": rel_str, "kind": _doc_kind(rel)})
-
-        try:
-            blocks = _parse_blocks(path.read_text(encoding="utf-8"))
-        except Exception as e:
-            errors.append(f"{rel_str}: {e}")
-            continue
-
-        try:
-            local_tokens = _parse_legend_tokens(blocks.legend)
-        except Exception as e:
-            errors.append(f"{rel_str}: invalid [LEGEND]: {e}")
-            continue
-
-        if path == legend_path:
-            local_tokens = {}
-
-        local_tokens_by_doc[rel_str] = _sorted_dict(local_tokens)
-        refs_by_doc[rel_str] = sorted(_extract_token_refs(blocks.content))
-
-    if errors:
-        print("== context index errors ==", file=sys.stderr)
-        for e in errors:
-            print(f"- {e}", file=sys.stderr)
-        print(f"\nFAIL: context index ({len(errors)} error(s)).", file=sys.stderr)
-        return 2
-
-    # Build reverse index for quick navigation.
-    reverse_index: dict[str, dict[str, object]] = {}
-
-    for token, meaning in global_tokens.items():
-        reverse_index[token] = {
-            "meaning": meaning,
-            "defined_in": "LEGEND.md",
-            "used_in": [],
-        }
-
-    for doc, local_tokens in local_tokens_by_doc.items():
-        for token, meaning in local_tokens.items():
-            reverse_index[token] = {
-                "meaning": meaning,
-                "defined_in": doc,
-                "used_in": [],
-            }
-
-    for doc, refs in refs_by_doc.items():
-        for token in refs:
-            if token not in reverse_index:
-                # Gate should catch this; keep index robust anyway.
-                reverse_index[token] = {"meaning": "", "defined_in": "", "used_in": []}
-            used_in = reverse_index[token].get("used_in")
-            if isinstance(used_in, list):
-                used_in.append(doc)
-
-    for token in list(reverse_index.keys()):
-        used_in = reverse_index[token].get("used_in")
-        if isinstance(used_in, list):
-            reverse_index[token]["used_in"] = sorted(set(str(x) for x in used_in))
-
-    out_dir = root / "ai"
-    out_dir.mkdir(parents=True, exist_ok=True)
-    out_path = out_dir / "context_index.json"
-    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
-    payload = {
-        "version": 1,
-        "generated_at_utc": now,
-        "docs": sorted(docs, key=lambda d: (d.get("kind", ""), d.get("path", ""))),
-        "tokens_global": _sorted_dict(global_tokens),
-        "tokens_local": {k: local_tokens_by_doc[k] for k in sorted(local_tokens_by_doc.keys())},
-        "refs": {k: refs_by_doc[k] for k in sorted(refs_by_doc.keys())},
-        "reverse_index": {k: reverse_index[k] for k in sorted(reverse_index.keys())},
-    }
-    out_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-
-    print(f"Wrote: {out_path}")
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(json.dumps(index, indent=2, sort_keys=False) + "\n", encoding="utf-8")
     return 0
 
 
