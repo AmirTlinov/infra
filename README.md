@@ -140,7 +140,49 @@ Add to your Zed `settings.json`:
 - Deterministic, auditable infrastructure actions (audit + evidence + artifacts).
 - Repeatable workflows via runbooks and intents.
 - Safe‑by‑default execution with explicit opt‑ins for risky operations.
-- Project‑isolated state so agents don’t leak configs across repos.
+- Project‑isolated state so agents don't leak configs across repos.
+
+### Capabilities at a glance
+
+| Category | What you can do | Example |
+|----------|-----------------|---------|
+| **SSH** | Execute commands, health checks, system info | `ssh { action: "exec", target: "prod", command: "uptime" }` |
+| **Postgres** | Query, export tables to CSV | `psql { action: "query", sql: "SELECT now()" }` |
+| **HTTP** | API requests, health checks | `http { action: "request", url: "https://api/health" }` |
+| **K8s** | Render, diff, apply, rollout inspect | `runbook { name: "k8s.diff", input: { overlay: "./dev" } }` |
+| **GitOps** | Full release cycle (ArgoCD/Flux) | See GitOps Autopilot below |
+| **Runbooks** | Composable multi-step workflows | Chain SSH → DB → HTTP in one call |
+| **Artifacts** | Store and retrieve run outputs | `artifact://runs/deploy/2026-01-29T10:30:00Z` |
+| **Jobs** | Async execution, status, logs, cancel | Long-running tasks don't block |
+| **Context** | Auto-detect repo type, k8s, flux/argocd | Agent knows what tools apply |
+| **Preflight** | Self-diagnostics before running | "Can I connect to this cluster?" |
+
+### Architecture
+
+```text
+┌─────────┐      stdio/JSON-RPC       ┌──────────────────────────────────────┐
+│  Agent  │ ◀──────────────────────▶  │              Infra                   │
+└─────────┘                           │                                      │
+                                      │  ┌──────┐ ┌────────┐ ┌──────┐        │
+                                      │  │ SSH  │ │Postgres│ │ HTTP │  ...   │
+                                      │  └──┬───┘ └───┬────┘ └──┬───┘        │
+                                      │     │         │         │            │
+                                      │     ▼         ▼         ▼            │
+                                      │  ┌─────────────────────────────────┐ │
+                                      │  │   Audit · Evidence · Artifacts  │ │
+                                      │  └─────────────────────────────────┘ │
+                                      └──────────────────────────────────────┘
+```
+
+### GitOps Autopilot (ArgoCD / Flux)
+
+Full release cycle in one runbook — no manual steps:
+
+```text
+plan → propose (branch + PR) → wait for CI → merge → sync → verify health → auto-rollback on failure
+```
+
+Built-in capabilities: `gitops.plan`, `gitops.propose`, `gitops.sync`, `gitops.verify`, `gitops.rollback`, `gitops.release`.
 
 ## Project isolation (recommended)
 
@@ -358,6 +400,23 @@ Run it:
 - `docs/RUNBOOK.md` — runbooks
 - `docs/INTEGRATION.md` — integration checks
 - `SECURITY.md` — security policy
+
+## FAQ
+
+**Can the agent delete my files or run arbitrary shell commands?**  
+No — unless you explicitly set `INFRA_UNSAFE_LOCAL=1`. By default, local exec and filesystem access are disabled.
+
+**Does Infra phone home or send telemetry?**  
+No. Infra is fully local, stdio-only. No network calls except the ones you configure (SSH, HTTP, Postgres targets).
+
+**What if a command hangs or takes too long?**  
+Use `timeout_ms` on any tool call. For long-running tasks, use the Jobs API — async execution with status, logs, and cancel.
+
+**How do I know what the agent actually did?**  
+Every action creates an artifact with full audit trail. Use `mcp_artifacts { action: "list" }` to browse, or check the artifacts directory.
+
+**Does it work with Claude Desktop / VS Code / Zed?**  
+Yes — any MCP-compatible client. See [Client configs](#client-configs) for examples.
 
 ## For contributors
 
