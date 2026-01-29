@@ -74,6 +74,109 @@ cargo build --release
 { "tool": "help", "args": { "query": "runbook" } }
 ```
 
+## First run in 60 seconds
+
+No external services needed — just run a built-in runbook to see Infra in action:
+
+```json
+// 1. List available runbooks
+{ "tool": "runbook", "args": { "action": "list", "query": "repo", "limit": 5 } }
+
+// 2. Run repo.snapshot on the current directory (read-only, no side effects)
+{ "tool": "runbook", "args": { "action": "run", "name": "repo.snapshot", "input": { "repo_path": "." } } }
+```
+
+Output includes: repo root, current branch, recent commits, diffstat — and an `artifact://` reference you can browse later.
+
+## Verify checksum
+
+When downloading from [Releases](https://github.com/AmirTlinov/infra/releases), verify the binary:
+
+```bash
+# Download binary and checksum
+curl -LO https://github.com/AmirTlinov/infra/releases/latest/download/infra-linux-x86_64
+curl -LO https://github.com/AmirTlinov/infra/releases/latest/download/infra-linux-x86_64.sha256
+
+# Verify
+sha256sum -c infra-linux-x86_64.sha256
+chmod +x infra-linux-x86_64
+./infra-linux-x86_64
+```
+
+> **Note**: Prebuilt binaries are available starting with future releases. For now, build from source with `cargo build --release`.
+
+## Project templates
+
+Create a minimal `.infra/` directory for your project:
+
+```bash
+mkdir -p .infra
+```
+
+**.infra/runbooks.json** (minimal):
+
+```json
+{
+  "hello.world": {
+    "description": "A simple test runbook.",
+    "tags": ["test"],
+    "inputs": ["message"],
+    "steps": [
+      {
+        "id": "echo",
+        "tool": "mcp_state",
+        "args": { "action": "set", "key": "hello", "value": "{{ input.message }}" }
+      }
+    ]
+  }
+}
+```
+
+**.infra/capabilities.json** (minimal):
+
+```json
+{
+  "version": 1,
+  "capabilities": {}
+}
+```
+
+**.infra/targets.json** (example SSH target):
+
+```json
+{
+  "prod": {
+    "host": "prod.example.com",
+    "port": 22,
+    "username": "deploy",
+    "key_file": "~/.ssh/id_ed25519"
+  }
+}
+```
+
+Then point Infra to your project:
+
+```bash
+export MCP_PROFILES_DIR=/path/to/your/project/.infra
+```
+
+## Browsing artifacts
+
+Every tool call can produce artifacts. Here's how to browse them:
+
+```json
+// List recent artifacts
+{ "tool": "mcp_artifacts", "args": { "action": "list", "limit": 10 } }
+
+// Read a specific artifact
+{ "tool": "mcp_artifacts", "args": { "action": "get", "uri": "artifact://runs/repo.snapshot/2026-01-29T10:00:00Z", "max_bytes": 4096 } }
+
+// Get just the tail (last N bytes)
+{ "tool": "mcp_artifacts", "args": { "action": "tail", "uri": "artifact://...", "max_bytes": 1024 } }
+```
+
+Artifacts contain: full command output, timing, exit codes, and any structured data returned by the tool.
+
 ## Client configs
 
 ### Claude Desktop
