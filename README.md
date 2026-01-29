@@ -44,7 +44,7 @@ Every run creates an artifact with full audit trail — what ran, what changed, 
 
 1) Install
 
-- Download a prebuilt binary from GitHub Releases.
+- Download a prebuilt binary from [GitHub Releases](https://github.com/AmirTlinov/infra/releases).
 - Or build from source:
 
 ```bash

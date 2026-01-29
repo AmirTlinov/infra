@@ -1,25 +1,25 @@
 [
   {
     "name": "help",
-    "description": "Краткая справка по использованию Infra и доступным инструментам.",
+    "description": "Quick reference for using Infra and available tools.",
     "inputSchema": {
       "type": "object",
       "properties": {
         "tool": {
           "type": "string",
-          "description": "Название инструмента для детализации. Оставьте пустым для общего описания."
+          "description": "Tool name for detailed info. Leave empty for general description."
         },
         "action": {
           "type": "string",
-          "description": "Опционально: конкретный action внутри инструмента (например, exec/profile_upsert)."
+          "description": "Optional: specific action within the tool (e.g., exec/profile_upsert)."
         },
         "query": {
           "type": "string",
-          "description": "Поиск по инструментам/alias/action/полям. Пример: { query: \"ssh exec\" }"
+          "description": "Search across tools/aliases/actions/fields. Example: { query: \"ssh exec\" }"
         },
         "limit": {
           "type": "integer",
-          "description": "Максимум результатов для query (по умолчанию 20)."
+          "description": "Max results for query (default 20)."
         },
         "output": {
           "type": "object",
@@ -93,7 +93,7 @@
   },
   {
     "name": "legend",
-    "description": "Семантическая легенда: что значат общие поля и как Infra разрешает project/target/profile/preset/alias.",
+    "description": "Semantic legend: what common fields mean and how Infra resolves project/target/profile/preset/alias.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -1170,7 +1170,7 @@
   },
   {
     "name": "mcp_vault",
-    "description": "HashiCorp Vault: профили + диагностика (KV v2 + AppRole auto-login).",
+    "description": "HashiCorp Vault: profiles + diagnostics (KV v2 + AppRole auto-login).",
     "inputSchema": {
       "type": "object",
       "properties": {
