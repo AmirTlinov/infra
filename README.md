@@ -2,9 +2,48 @@
 
 Infra is a production‑grade **stdio MCP server** for AI‑agent operations. It provides a single, deterministic interface to SSH, HTTP, Postgres, git/repo ops, pipelines, runbooks, intents, evidence, audit, and state.
 
+[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+
+## Why Infra? What's different?
+
+Most MCP tool servers give agents raw shell access and hope for the best. **Infra takes the opposite approach**: every action goes through a unified interface with built-in audit, evidence, and explicit opt-ins for risky ops.
+
+- **One server, full stack** — SSH, HTTP, Postgres, git, runbooks, state. No juggling 5 different MCP servers.  
+- **Audit by default** — Every call is logged with evidence/artifacts. You can always answer "what did the agent do?"  
+- **Safe-by-default execution** — Local exec and secret export are *disabled* unless you explicitly opt in. Agents can't escape the sandbox by accident.  
+
+Core engineering idea: **deterministic, auditable infrastructure actions** with the minimal surface area an agent actually needs.
+
+## Safe-by-default
+
+Infra is locked down out of the box. Risky capabilities require explicit environment variables:
+
+| Capability | Env var | Default |
+|------------|---------|---------|
+| Local shell/filesystem access | `INFRA_UNSAFE_LOCAL=1` | **disabled** |
+| Secret export (env vars, tokens) | `INFRA_ALLOW_SECRET_EXPORT=1` | **disabled** |
+
+Without these flags, agents cannot execute arbitrary local commands or leak secrets — even if they try.
+
+## Quick demo (30 seconds)
+
+```text
+You: "What runbooks do we have for deploys?"
+Agent → help { query: "deploy runbook" }
+      ← Found: deploy.k8s, deploy.staging, deploy.rollback ...
+
+You: "Run staging deploy for service 'api'"
+Agent → runbook { action: "run", name: "deploy.staging", input: { service: "api" } }
+      ← ✓ Artifacts: artifact://runs/deploy.staging/2026-01-29T10:30:00Z
+        Evidence: commit abc123 deployed to staging-api-7f8d9, health-check passed.
+```
+
+Every run creates an artifact with full audit trail — what ran, what changed, what the output was.
+
 ## Quickstart (2 minutes)
 
 1) Install
+
 - Download a prebuilt binary from GitHub Releases.
 - Or build from source:
 
@@ -13,7 +52,7 @@ cargo build --release
 # binary: target/release/infra
 ```
 
-2) Configure your MCP client (example shape; adjust for your client)
+1) Configure your MCP client (example shape; adjust for your client)
 
 ```json
 {
@@ -29,7 +68,7 @@ cargo build --release
 }
 ```
 
-3) Sanity check
+1) Sanity check
 
 ```json
 { "tool": "help", "args": { "query": "runbook" } }
@@ -38,7 +77,9 @@ cargo build --release
 ## Client configs
 
 ### Claude Desktop
+
 Common config locations:
+
 - macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`
 - Linux: `~/.config/Claude/claude_desktop_config.json`
 - Windows: `%APPDATA%\\Claude\\claude_desktop_config.json`
@@ -58,6 +99,7 @@ Common config locations:
 ```
 
 ### VS Code
+
 Create `.vscode/mcp.json` in your workspace:
 
 ```json
@@ -76,6 +118,7 @@ Create `.vscode/mcp.json` in your workspace:
 ```
 
 ### Zed
+
 Add to your Zed `settings.json`:
 
 ```json
@@ -93,12 +136,14 @@ Add to your Zed `settings.json`:
 ```
 
 ## What Infra gives you
+
 - Deterministic, auditable infrastructure actions (audit + evidence + artifacts).
 - Repeatable workflows via runbooks and intents.
 - Safe‑by‑default execution with explicit opt‑ins for risky operations.
 - Project‑isolated state so agents don’t leak configs across repos.
 
 ## Project isolation (recommended)
+
 Set a per‑repo profiles directory:
 
 ```
@@ -106,11 +151,13 @@ MCP_PROFILES_DIR=/path/to/your/project/.infra
 ```
 
 Optional explicit paths:
+
 - `MCP_RUNBOOKS_PATH=/path/to/your/project/.infra/runbooks.json`
 - `MCP_CAPABILITIES_PATH=/path/to/your/project/.infra/capabilities.json`
 - `MCP_CONTEXT_REPO_ROOT=/path/to/your/project/.infra/artifacts`
 
 ## Tool discovery
+
 Infra exposes a rich tool catalog. Use these to discover exact schemas and actions:
 
 ```json
@@ -118,9 +165,11 @@ Infra exposes a rich tool catalog. Use these to discover exact schemas and actio
 ```
 
 Machine‑readable catalog:
+
 - `tool_catalog.json`
 
 Stdin options (for `ssh`, `env`, `repo`, `mcp_local`):
+
 - `stdin`: plain text
 - `stdin_base64`: binary input
 - `stdin_file`: stream from local file
@@ -128,6 +177,7 @@ Stdin options (for `ssh`, `env`, `repo`, `mcp_local`):
 - `stdin_eof`: control EOF behavior (default: true)
 
 ## Common operations (examples)
+
 List runbooks:
 
 ```json
@@ -163,6 +213,7 @@ Note: For exact tool names and schemas, use `help` or `tool_catalog.json`.
 ## Recipes
 
 ### GitOps: kustomize diff (requires `INFRA_UNSAFE_LOCAL=1` + kubectl)
+
 Define the runbook:
 
 ```json
@@ -212,6 +263,7 @@ Run it:
 ```
 
 ### VPS: restart a service over SSH
+
 Define the runbook:
 
 ```json
@@ -256,6 +308,7 @@ Run it:
 ```
 
 ### DB: export a table to CSV
+
 Define the runbook:
 
 ```json
@@ -293,23 +346,20 @@ Run it:
 { "tool": "runbook", "args": { "action": "run", "name": "db.export.table", "input": { "profile_name": "prod-db", "table": "events", "file_path": "/var/backups/events.csv" } } }
 ```
 
-## Safety & scope
-- Local exec + filesystem tools are disabled unless `INFRA_UNSAFE_LOCAL=1`.
-- Secret export is disabled unless `INFRA_ALLOW_SECRET_EXPORT=1`.
-- Use `timeout_ms` and limit list sizes for reliability.
-- Prefer read‑only actions unless a write is explicit.
-
 ## Troubleshooting
+
 - If a tool call times out, increase your client timeout or reduce batch size.
 - Use audit/evidence tools to inspect what happened.
 - Run `./tools/doctor` for diagnostics when building from source.
 
 ## Documentation
+
 - `mcp_config.md` — MCP client configuration
 - `docs/RUNBOOK.md` — runbooks
 - `docs/INTEGRATION.md` — integration checks
 - `SECURITY.md` — security policy
 
 ## For contributors
+
 - `./tools/doctor` — diagnostics
 - `./tools/gate` — fmt + clippy + tests
