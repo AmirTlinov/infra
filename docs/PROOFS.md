@@ -2,7 +2,7 @@
 PROOF = A reproducible verification command + expected result.
 
 [CONTENT]
-## Proofs (2026-01-24)
+## Proofs (2026-02-09)
 
 - [PROOF]: `./tools/doctor` → OK.
 - [PROOF]: `./tools/gate` → OK (fmt + clippy `-D warnings` + tests).

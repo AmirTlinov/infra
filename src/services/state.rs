@@ -1,53 +1,45 @@
 use crate::errors::ToolError;
-use crate::utils::fs_atomic::atomic_write_text_file;
-use crate::utils::paths::resolve_state_path;
+use crate::services::store_db::StoreDb;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
+const PERSISTENT_NAMESPACE: &str = "state:persistent";
+
 #[derive(Clone)]
 pub struct StateService {
-    file_path: std::path::PathBuf,
-    persistent: Arc<RwLock<HashMap<String, Value>>>,
+    store: StoreDb,
     session: Arc<RwLock<HashMap<String, Value>>>,
 }
 
 impl StateService {
     pub fn new() -> Result<Self, ToolError> {
         let service = Self {
-            file_path: resolve_state_path(),
-            persistent: Arc::new(RwLock::new(HashMap::new())),
+            store: StoreDb::new()?,
             session: Arc::new(RwLock::new(HashMap::new())),
         };
-        service.load()?;
+        service.import_legacy_once()?;
         Ok(service)
     }
 
-    fn load(&self) -> Result<(), ToolError> {
-        if !self.file_path.exists() {
+    fn import_legacy_once(&self) -> Result<(), ToolError> {
+        let path = crate::utils::paths::resolve_state_path();
+        let import_key = format!("file:{}", path.display());
+        if self.store.has_import(PERSISTENT_NAMESPACE, &import_key)? || !path.exists() {
             return Ok(());
         }
-        let raw = std::fs::read_to_string(&self.file_path)
+        let raw = std::fs::read_to_string(&path)
             .map_err(|err| ToolError::internal(format!("Failed to load state file: {}", err)))?;
         let parsed: Value = serde_json::from_str(&raw)
             .map_err(|err| ToolError::internal(format!("Failed to parse state file: {}", err)))?;
         if let Some(obj) = parsed.as_object() {
-            let mut guard = self.persistent.write().unwrap();
             for (key, value) in obj {
-                guard.insert(key.clone(), value.clone());
+                self.store
+                    .upsert(PERSISTENT_NAMESPACE, key, value, Some("local"))?;
             }
         }
-        Ok(())
-    }
-
-    fn persist(&self) -> Result<(), ToolError> {
-        let guard = self.persistent.read().unwrap();
-        let data = serde_json::to_string_pretty(&Value::Object(
-            guard.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
-        ))
-        .map_err(|err| ToolError::internal(format!("Failed to serialize state: {}", err)))?;
-        atomic_write_text_file(&self.file_path, &format!("{}\n", data), 0o600)
-            .map_err(|err| ToolError::internal(format!("Failed to save state: {}", err)))?;
+        self.store
+            .mark_imported(PERSISTENT_NAMESPACE, &import_key)?;
         Ok(())
     }
 
@@ -59,6 +51,14 @@ impl StateService {
                 "scope must be one of: session, persistent, any",
             )),
         }
+    }
+
+    fn persistent_map(&self) -> Result<HashMap<String, Value>, ToolError> {
+        let mut out = HashMap::new();
+        for record in self.store.list(PERSISTENT_NAMESPACE)? {
+            out.insert(record.key, record.value);
+        }
+        Ok(out)
     }
 
     pub fn set(&self, key: &str, value: Value, scope: Option<&str>) -> Result<Value, ToolError> {
@@ -74,15 +74,14 @@ impl StateService {
                 .unwrap()
                 .insert(key.trim().to_string(), value);
         } else {
-            self.persistent
-                .write()
-                .unwrap()
-                .insert(key.trim().to_string(), value);
-            self.persist()?;
+            self.store
+                .upsert(PERSISTENT_NAMESPACE, key.trim(), &value, Some("local"))?;
         }
-        Ok(
-            serde_json::json!({"success": true, "key": key.trim(), "scope": if normalized == "any" {"persistent"} else {&normalized}}),
-        )
+        Ok(serde_json::json!({
+            "success": true,
+            "key": key.trim(),
+            "scope": if normalized == "any" {"persistent"} else {&normalized}
+        }))
     }
 
     pub fn get(&self, key: &str, scope: Option<&str>) -> Result<Value, ToolError> {
@@ -101,15 +100,15 @@ impl StateService {
             }
             resolved_scope = "session";
         } else if normalized == "persistent" {
-            if let Some(val) = self.persistent.read().unwrap().get(trimmed) {
-                value = val.clone();
+            if let Some(record) = self.store.get(PERSISTENT_NAMESPACE, trimmed)? {
+                value = record.value;
             }
             resolved_scope = "persistent";
         } else if let Some(val) = self.session.read().unwrap().get(trimmed) {
             value = val.clone();
             resolved_scope = "session";
-        } else if let Some(val) = self.persistent.read().unwrap().get(trimmed) {
-            value = val.clone();
+        } else if let Some(record) = self.store.get(PERSISTENT_NAMESPACE, trimmed)? {
+            value = record.value;
             resolved_scope = "persistent";
         }
         Ok(
@@ -148,12 +147,12 @@ impl StateService {
                 serde_json::json!({"success": true, "scope": "session", "items": gather(&self.session.read().unwrap())}),
             );
         }
+        let persistent = self.persistent_map()?;
         if normalized == "persistent" {
             return Ok(
-                serde_json::json!({"success": true, "scope": "persistent", "items": gather(&self.persistent.read().unwrap())}),
+                serde_json::json!({"success": true, "scope": "persistent", "items": gather(&persistent)}),
             );
         }
-        let persistent = self.persistent.read().unwrap();
         let session = self.session.read().unwrap();
         let mut items = gather(&persistent);
         for item in gather(&session) {
@@ -183,8 +182,7 @@ impl StateService {
             self.session.write().unwrap().remove(trimmed);
         }
         if normalized == "persistent" || normalized == "any" {
-            self.persistent.write().unwrap().remove(trimmed);
-            self.persist()?;
+            self.store.delete(PERSISTENT_NAMESPACE, trimmed)?;
         }
         Ok(serde_json::json!({"success": true, "key": trimmed, "scope": normalized}))
     }
@@ -195,15 +193,14 @@ impl StateService {
             self.session.write().unwrap().clear();
         }
         if normalized == "persistent" || normalized == "any" {
-            self.persistent.write().unwrap().clear();
-            self.persist()?;
+            self.store.clear_namespace(PERSISTENT_NAMESPACE)?;
         }
         Ok(serde_json::json!({"success": true, "scope": normalized}))
     }
 
     pub fn dump(&self, scope: Option<&str>) -> Result<Value, ToolError> {
-        let normalized = self.normalize_scope(scope.unwrap_or("any").into())?;
-        let persistent = self.persistent.read().unwrap();
+        let normalized = self.normalize_scope(Some(scope.unwrap_or("any")))?;
+        let persistent = self.persistent_map()?;
         let session = self.session.read().unwrap();
         if normalized == "session" {
             return Ok(
@@ -225,11 +222,17 @@ impl StateService {
     }
 
     pub fn get_stats(&self) -> Value {
-        let persistent = self.persistent.read().unwrap();
-        let session = self.session.read().unwrap();
+        let persistent = self
+            .store
+            .list(PERSISTENT_NAMESPACE)
+            .map(|items| items.len())
+            .unwrap_or(0);
+        let session = self.session.read().unwrap().len();
         serde_json::json!({
-            "session_keys": session.len(),
-            "persistent_keys": persistent.len(),
+            "session_keys": session,
+            "persistent_keys": persistent,
+            "store": "sqlite",
+            "store_path": self.store.path().display().to_string(),
         })
     }
 }

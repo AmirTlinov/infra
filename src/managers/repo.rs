@@ -1,15 +1,21 @@
 use crate::errors::ToolError;
 use crate::services::logger::Logger;
+use crate::utils::artifacts::{
+    build_tool_call_file_ref, resolve_context_root, write_text_artifact,
+};
 use crate::utils::sandbox::resolve_sandbox_path;
 use crate::utils::stdin::{resolve_stdin_source, StdinSource};
-use crate::utils::template::resolve_templates;
 use crate::utils::tool_errors::unknown_action_error;
+use once_cell::sync::Lazy;
+use regex::Regex;
 use serde_json::Value;
+use sha2::{Digest, Sha256};
+use std::collections::HashMap;
 use std::path::PathBuf;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::process::Command;
 
-const REPO_ACTIONS: &[&str] = &[
+pub(crate) const REPO_ACTIONS: &[&str] = &[
     "exec",
     "repo_info",
     "assert_clean",
@@ -20,6 +26,41 @@ const REPO_ACTIONS: &[&str] = &[
     "git_revert",
     "git_push",
 ];
+
+static IMAGE_LINE_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(?m)^\s*image\s*:\s*(?P<image>.+?)\s*$").unwrap());
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    hex::encode(hasher.finalize())
+}
+
+fn strip_yaml_scalar(value: &str) -> String {
+    let mut trimmed = value.trim().to_string();
+    if let Some((left, _)) = trimmed.split_once('#') {
+        // Best-effort: drop trailing comments.
+        trimmed = left.trim().to_string();
+    }
+    if (trimmed.starts_with('"') && trimmed.ends_with('"') && trimmed.len() >= 2)
+        || (trimmed.starts_with('\'') && trimmed.ends_with('\'') && trimmed.len() >= 2)
+    {
+        trimmed = trimmed[1..trimmed.len() - 1].to_string();
+    }
+    trimmed.trim().to_string()
+}
+
+fn image_tag(image: &str) -> Option<String> {
+    let before_digest = image.split('@').next().unwrap_or(image);
+    let slash = before_digest.rfind('/').unwrap_or(0);
+    let colon = before_digest.rfind(':');
+    if let Some(idx) = colon {
+        if idx > slash {
+            return Some(before_digest[idx + 1..].to_string());
+        }
+    }
+    None
+}
 
 fn read_positive_int(value: Option<&Value>) -> Option<u64> {
     let value = value?;
@@ -104,6 +145,15 @@ impl RepoManager {
         stdin: Option<StdinSource>,
         stdin_eof: bool,
     ) -> Result<(i32, Vec<u8>, Vec<u8>, bool), ToolError> {
+        let allowed = allowed_commands();
+        if !allowed.iter().any(|c| c == command || c == "*") {
+            return Err(
+                ToolError::denied(format!("Command '{}' is not allowed", command)).with_hint(
+                    "Set INFRA_REPO_ALLOWED_COMMANDS to allow additional commands.".to_string(),
+                ),
+            );
+        }
+
         let mut cmd = Command::new(command);
         cmd.args(args);
         cmd.current_dir(cwd);
@@ -271,13 +321,16 @@ impl RepoManager {
 
     async fn git_diff(&self, args: Value) -> Result<Value, ToolError> {
         let repo_root = self.resolve_repo_root(&args)?;
-        let mut argv = vec!["diff".to_string()];
+        let max_capture_bytes = read_positive_int(args.get("max_bytes")).unwrap_or(10_000_000);
+
+        let mut argv = vec!["diff".to_string(), "--no-color".to_string()];
         if let Some(paths) = args.get("paths").and_then(|v| v.as_array()) {
             argv.push("--".to_string());
             for entry in paths.iter().filter_map(|v| v.as_str()) {
                 argv.push(entry.to_string());
             }
         }
+
         let (code, stdout, stderr, _) = self
             .run_command(&repo_root, "git", &argv, Some(30_000), None, true)
             .await?;
@@ -288,25 +341,348 @@ impl RepoManager {
                 })),
             );
         }
+
+        let truncated = stdout.len() as u64 > max_capture_bytes;
+        let captured = if truncated {
+            &stdout[..(max_capture_bytes as usize).min(stdout.len())]
+        } else {
+            stdout.as_slice()
+        };
+
+        let diff_sha256 = sha256_hex(captured);
+        let mut diff_ref = Value::Null;
+        if let Some(root) = resolve_context_root() {
+            let trace_id = args.get("trace_id").and_then(|v| v.as_str());
+            let span_id = args.get("span_id").and_then(|v| v.as_str());
+            if let Ok(reference) = build_tool_call_file_ref(trace_id, span_id, "git-diff.patch") {
+                let content = String::from_utf8_lossy(captured).to_string();
+                let written = write_text_artifact(&root, &reference, &content)?;
+                diff_ref = Value::String(written.uri);
+            }
+        }
+
+        // Diffstat is useful for quick planning and is kept inline.
+        let mut stat_argv = vec!["diff".to_string(), "--stat".to_string()];
+        if let Some(paths) = args.get("paths").and_then(|v| v.as_array()) {
+            stat_argv.push("--".to_string());
+            for entry in paths.iter().filter_map(|v| v.as_str()) {
+                stat_argv.push(entry.to_string());
+            }
+        }
+        let diffstat = match self
+            .run_command(&repo_root, "git", &stat_argv, Some(30_000), None, true)
+            .await
+        {
+            Ok((0, out, _err, _)) => String::from_utf8_lossy(&out).to_string(),
+            Ok((_code, _out, err, _)) => {
+                format!("[diffstat unavailable: {}]", String::from_utf8_lossy(&err))
+            }
+            Err(err) => format!("[diffstat unavailable: {}]", err.message),
+        };
+
         Ok(serde_json::json!({
             "success": true,
-            "diff": String::from_utf8_lossy(&stdout).to_string(),
+            "diff_ref": diff_ref,
+            "diff_sha256": diff_sha256,
+            "diff_truncated": truncated,
+            "diff_bytes": stdout.len(),
+            "diff_captured_bytes": captured.len(),
+            "diffstat": diffstat,
         }))
     }
 
     async fn render(&self, args: Value) -> Result<Value, ToolError> {
-        let template = args.get("template").and_then(|v| v.as_str()).unwrap_or("");
-        let context = args.get("context").cloned().unwrap_or_else(|| {
-            args.get("data")
-                .cloned()
-                .unwrap_or(Value::Object(Default::default()))
-        });
-        let missing = args
-            .get("template_missing")
+        let repo_root = self.resolve_repo_root(&args)?;
+
+        let requested_type = args
+            .get("render_type")
             .and_then(|v| v.as_str())
-            .unwrap_or("error");
-        let rendered = resolve_templates(&Value::String(template.to_string()), &context, missing)?;
-        Ok(serde_json::json!({"success": true, "rendered": rendered}))
+            .map(|s| s.trim().to_lowercase());
+        let overlay = args
+            .get("overlay")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let chart = args
+            .get("chart")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let values: Vec<String> = if let Some(arr) = args.get("values").and_then(|v| v.as_array()) {
+            arr.iter()
+                .filter_map(|v| v.as_str())
+                .map(|s| s.to_string())
+                .collect()
+        } else if let Some(text) = args.get("values").and_then(|v| v.as_str()) {
+            vec![text.to_string()]
+        } else {
+            Vec::new()
+        };
+
+        let inferred = if !chart.as_deref().unwrap_or("").trim().is_empty() {
+            "helm".to_string()
+        } else if !overlay.as_deref().unwrap_or("").trim().is_empty() {
+            "kustomize".to_string()
+        } else {
+            "plain".to_string()
+        };
+        let render_type = requested_type.unwrap_or(inferred);
+
+        let overlay_path = if let Some(overlay) = overlay.as_deref() {
+            let candidate = std::path::PathBuf::from(overlay);
+            Some(resolve_sandbox_path(&repo_root, Some(&candidate), true)?)
+        } else {
+            None
+        };
+        let chart_path = if let Some(chart) = chart.as_deref() {
+            let candidate = std::path::PathBuf::from(chart);
+            Some(resolve_sandbox_path(&repo_root, Some(&candidate), true)?)
+        } else {
+            None
+        };
+        let mut values_paths = Vec::new();
+        for entry in values.iter() {
+            let candidate = std::path::PathBuf::from(entry);
+            values_paths.push(resolve_sandbox_path(&repo_root, Some(&candidate), true)?);
+        }
+
+        let max_capture_bytes =
+            read_positive_int(args.get("max_bytes")).unwrap_or(25_000_000) as usize;
+
+        let (command, argv): (&str, Vec<String>) = match render_type.as_str() {
+            "plain" => ("", Vec::new()),
+            "kustomize" => {
+                let overlay = overlay_path.clone().unwrap_or_else(|| repo_root.clone());
+                (
+                    "kubectl",
+                    vec![
+                        "kustomize".to_string(),
+                        overlay.to_string_lossy().to_string(),
+                    ],
+                )
+            }
+            "helm" => {
+                let Some(chart_path) = chart_path.clone() else {
+                    return Err(ToolError::invalid_params(
+                        "chart is required for render_type=helm",
+                    ));
+                };
+                let mut argv = vec![
+                    "template".to_string(),
+                    "infra".to_string(),
+                    chart_path.to_string_lossy().to_string(),
+                ];
+                for path in values_paths.iter() {
+                    argv.push("-f".to_string());
+                    argv.push(path.to_string_lossy().to_string());
+                }
+                ("helm", argv)
+            }
+            other => {
+                return Err(ToolError::invalid_params(format!(
+                    "Invalid render_type: {} (expected plain|kustomize|helm)",
+                    other
+                )))
+            }
+        };
+
+        let rendered_bytes: Vec<u8> = if render_type == "plain" {
+            let root = overlay_path.clone().unwrap_or_else(|| repo_root.clone());
+            if root.is_file() {
+                tokio::fs::read(&root)
+                    .await
+                    .map_err(|err| ToolError::internal(format!("Failed to read file: {}", err)))?
+            } else {
+                let mut files = Vec::new();
+                for entry in walkdir::WalkDir::new(&root)
+                    .into_iter()
+                    .filter_map(Result::ok)
+                {
+                    if !entry.file_type().is_file() {
+                        continue;
+                    }
+                    let path = entry.path();
+                    let ext = path
+                        .extension()
+                        .and_then(|v| v.to_str())
+                        .unwrap_or("")
+                        .to_lowercase();
+                    if ext == "yml" || ext == "yaml" {
+                        files.push(path.to_path_buf());
+                    }
+                    if files.len() >= 1000 {
+                        break;
+                    }
+                }
+                files.sort();
+                let mut combined = String::new();
+                for (idx, file) in files.iter().enumerate() {
+                    let content = tokio::fs::read_to_string(file).await.map_err(|err| {
+                        ToolError::internal(format!(
+                            "Failed to read yaml file {}: {}",
+                            file.display(),
+                            err
+                        ))
+                    })?;
+                    if idx > 0 {
+                        combined.push_str("\n---\n");
+                    }
+                    combined.push_str(&content);
+                }
+                combined.into_bytes()
+            }
+        } else {
+            let (code, stdout, stderr, timed_out) = self
+                .run_command(&repo_root, command, &argv, Some(60_000), None, true)
+                .await?;
+            if timed_out {
+                return Err(ToolError::timeout("render command timed out")
+                    .with_details(serde_json::json!({"command": command, "args": argv})));
+            }
+            if code != 0 {
+                // Best-effort: if kubectl is missing, hint about installing it.
+                let stderr_text = String::from_utf8_lossy(&stderr).to_string();
+                let hint =
+                    if stderr_text.contains("No such file") || stderr_text.contains("not found") {
+                        Some("Ensure kubectl/helm is installed and available in PATH.".to_string())
+                    } else {
+                        None
+                    };
+                let mut err =
+                    ToolError::internal("render failed").with_details(serde_json::json!({
+                        "command": command,
+                        "args": argv,
+                        "stderr": stderr_text,
+                    }));
+                if let Some(hint) = hint {
+                    err = err.with_hint(hint);
+                }
+                return Err(err);
+            }
+            stdout
+        };
+
+        let truncated = rendered_bytes.len() > max_capture_bytes;
+        let captured = if truncated {
+            &rendered_bytes[..max_capture_bytes.min(rendered_bytes.len())]
+        } else {
+            rendered_bytes.as_slice()
+        };
+        let render_sha256 = sha256_hex(captured);
+
+        let mut render_ref = Value::Null;
+        if let Some(root) = resolve_context_root() {
+            let trace_id = args.get("trace_id").and_then(|v| v.as_str());
+            let span_id = args.get("span_id").and_then(|v| v.as_str());
+            if let Ok(reference) = build_tool_call_file_ref(trace_id, span_id, "render.yaml") {
+                let content = String::from_utf8_lossy(captured).to_string();
+                let written = write_text_artifact(&root, &reference, &content)?;
+                render_ref = Value::String(written.uri);
+            }
+        }
+
+        let rendered = String::from_utf8_lossy(captured).to_string();
+        let mut images: HashMap<String, u64> = HashMap::new();
+        for cap in IMAGE_LINE_RE.captures_iter(&rendered) {
+            if let Some(raw) = cap.name("image").map(|m| m.as_str()) {
+                let img = strip_yaml_scalar(raw);
+                if img.is_empty() {
+                    continue;
+                }
+                let count = images.entry(img).or_insert(0);
+                *count += 1;
+            }
+        }
+
+        let mut images_items = Vec::new();
+        let mut unpinned = 0u64;
+        let mut latest = 0u64;
+        for (img, count) in images.iter() {
+            let pinned_by_digest = img.contains("@sha256:");
+            let tag = image_tag(img);
+            let is_latest = tag.as_deref() == Some("latest");
+            if !pinned_by_digest {
+                unpinned += 1;
+            }
+            if is_latest {
+                latest += 1;
+            }
+            images_items.push(serde_json::json!({
+                "image": img,
+                "occurrences": count,
+                "pinned_by_digest": pinned_by_digest,
+                "tag": tag,
+                "latest": is_latest,
+            }));
+        }
+        images_items.sort_by(|a, b| {
+            a.get("image")
+                .and_then(|v| v.as_str())
+                .cmp(&b.get("image").and_then(|v| v.as_str()))
+        });
+
+        let images_summary = serde_json::json!({
+            "unique": images_items.len(),
+            "total": images.values().sum::<u64>(),
+            "unpinned": unpinned,
+            "latest": latest,
+            "truncated": truncated,
+        });
+
+        let mut images_violations = Vec::new();
+        for item in images_items.iter() {
+            let pinned = item
+                .get("pinned_by_digest")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            let is_latest = item
+                .get("latest")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            let image = item.get("image").cloned().unwrap_or(Value::Null);
+            if !pinned {
+                images_violations.push(serde_json::json!({
+                    "rule": "require_digest_pinning",
+                    "image": image,
+                    "reason": "missing @sha256 digest",
+                }));
+            }
+            if is_latest {
+                images_violations.push(serde_json::json!({
+                    "rule": "disallow_latest",
+                    "image": image,
+                    "reason": "tag=latest",
+                }));
+            }
+        }
+
+        let mut images_ref = Value::Null;
+        if let Some(root) = resolve_context_root() {
+            let trace_id = args.get("trace_id").and_then(|v| v.as_str());
+            let span_id = args.get("span_id").and_then(|v| v.as_str());
+            if let Ok(reference) = build_tool_call_file_ref(trace_id, span_id, "images.json") {
+                let payload = serde_json::json!({ "images": images_items });
+                let content =
+                    serde_json::to_string_pretty(&payload).unwrap_or_else(|_| "{}".to_string());
+                let written = write_text_artifact(&root, &reference, &content)?;
+                images_ref = Value::String(written.uri);
+            }
+        }
+
+        Ok(serde_json::json!({
+            "success": true,
+            "render_type": render_type,
+            "repo_root": repo_root,
+            "overlay": overlay_path,
+            "chart": chart_path,
+            "values": values_paths,
+            "render_ref": render_ref,
+            "render_sha256": render_sha256,
+            "render_bytes": rendered_bytes.len(),
+            "render_captured_bytes": captured.len(),
+            "render_truncated": truncated,
+            "images_ref": images_ref,
+            "images_summary": images_summary,
+            "images_violations": images_violations,
+        }))
     }
 
     async fn apply_patch(&self, args: Value) -> Result<Value, ToolError> {

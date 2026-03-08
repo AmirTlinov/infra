@@ -31,7 +31,7 @@ pub fn build_legend_payload() -> Value {
             "Основная UX-ось: один раз связать `project`+`target` с профилями → дальше вызывать `ssh`/`env`/`psql`/`api` только с `target`.",
         ],
         "response": {
-            "shape": "По умолчанию инструменты возвращают строгий JSON envelope (для парсинга). Параллельно пишется .context артефакт для человека и `result.json` для машины (если настроен context repo root).",
+            "shape": "По умолчанию инструменты возвращают строгий JSON envelope (для парсинга) и дублируют его в MCP `structuredContent`. Параллельно пишется .context артефакт для человека и `result.json` для машины (если настроен context repo root).",
             "tracing": "Корреляция (`trace_id`/`span_id`/`parent_span_id`) пишется в audit log и логи (stderr). Для просмотра используйте `mcp_audit`.",
         },
         "common_fields": {
@@ -67,17 +67,34 @@ pub fn build_legend_payload() -> Value {
                 ],
                 "note": "`session` — дефолт, если scope не указан.",
             },
+            "apply": {
+                "meaning": "Явный opt-in для write/mixed effects: если действие помечено как `write`/`mixed` (см. `meta.effects.requires_apply=true`), без `apply: true` сервер вернёт deny.",
+                "example": { "tool": "mcp_repo", "action": "apply_patch", "apply": true, "repo_root": "/repo", "patch": "<diff>" },
+            },
+            "confirm": {
+                "meaning": "Явное подтверждение необратимости: если действие помечено как `irreversible` (см. `meta.effects.irreversible=true`), без `confirm: true` сервер вернёт deny.",
+                "example": { "tool": "mcp_env", "action": "profile_delete", "confirm": true, "profile_name": "prod-env" },
+            },
             "preset": {
-                "meaning": "Применить сохранённый preset до мерджа аргументов. Синонимы: `preset` и `preset_name`.",
+                "meaning": "`preset` / `preset_name` теперь compatibility-only: generic runtime hot path их отклоняет с migration hint.",
                 "merge_order": [
-                    "1) preset.data (по имени)",
-                    "2) alias.args (если вызвали алиас)",
-                    "3) arguments вызова (побеждают)",
+                    "1) используйте явные arguments вызова",
+                    "2) стабильные defaults переносите в project/target/profile config",
+                    "3) `mcp_preset` оставляйте только как legacy storage/list surface",
                 ],
             },
             "tracing": {
                 "meaning": "Корреляция вызовов для логов/аудита/трасс. Можно прокидывать сверху вниз.",
                 "fields": ["`trace_id`", "`span_id`", "`parent_span_id`"],
+            },
+            "stability": {
+                "meaning": "Опциональная политика устойчивости канала (`off|auto|aggressive` или объект overrides). Для `api` поле `stability` имеет приоритет над legacy `retry`.",
+                "overrides": [
+                    "`stability=off` — без ретраев/circuit-breaker.",
+                    "`stability=auto` — сбалансированные bounded retry + circuit-breaker.",
+                    "`stability=aggressive` — больше попыток и окно circuit-breaker.",
+                ],
+                "quiet_default": "Поле `result.stability` возвращается только если был retry/деградация (или включён debug).",
             },
             "response_mode": {
                 "meaning": "Формат ответа на этот tool-call: `ai|compact` (строгий JSON).",
@@ -87,10 +104,11 @@ pub fn build_legend_payload() -> Value {
         },
         "resolution": {
             "tool_aliases": Value::Object(aliases),
+            "tools_list": "В `tools/list` по умолчанию публикуется low-entropy core tier (`INFRA_TOOL_TIER=core`); `INFRA_TOOL_TIER=expert` включает расширенную каноническую поверхность. Встроенные короткие алиасы остаются совместимыми при явном `tools/call`.",
             "tool_resolution_order": [
                 "Точное имя инструмента (например, `mcp_ssh_manager`).",
                 "Встроенные алиасы (`ssh`, `psql`, `api`, …).",
-                "Пользовательские алиасы из `mcp_alias` (могут добавлять args/preset).",
+                "Пользовательские алиасы из `mcp_alias` (могут добавлять args; preset inheritance в runtime hot path отклоняется).",
             ],
             "project": {
                 "meaning": "Именованный набор target-ов, каждый target связывает профили/пути/URL.",
@@ -132,19 +150,26 @@ pub fn build_legend_payload() -> Value {
                 "meaning": "Даже если есть `include_secrets: true`, экспорт секретов из профилей включается только break-glass флагом окружения.",
                 "gates": ["`INFRA_ALLOW_SECRET_EXPORT=1`"],
             },
-            "intent_apply": {
-                "meaning": "Intent с write/mixed effects требует `apply: true` (иначе будет ошибка).",
+            "effects_apply": {
+                "meaning": "Любой action с write/mixed effects требует `apply: true` (иначе будет deny). `meta.effects` всегда возвращается в ответе.",
+            },
+            "effects_confirm": {
+                "meaning": "Любой action с irreversible effects требует `confirm: true` (иначе будет deny).",
             },
             "unsafe_local": {
                 "meaning": "`mcp_local` доступен только при включённом unsafe режиме; в обычном режиме он скрыт из `tools/list`.",
                 "gate": "`INFRA_UNSAFE_LOCAL=1`",
             },
+            "preset_runtime": {
+                "meaning": "Preset merge removed from generic executor hot path; explicit `preset` / `preset_name` now returns a compatibility error with migration hint.",
+            },
         },
         "golden_path": [
             "1) `help()` → увидеть инструменты.",
             "2) `legend()` → понять семантику общих полей и resolution.",
-            "3) (опционально) `mcp_project.project_upsert` + `mcp_project.project_use` → связать project/target с профилями.",
-            "4) Дальше работать через `ssh`/`env`/`psql`/`api` с `target` и минимальными аргументами.",
+            "3) `mcp_capability` + resources/prompts → выбрать capability family.",
+            "4) `mcp_operation` → observe/plan/apply/verify с receipt-driven ответом.",
+            "5) `mcp_project` использовать только когда нужно связать target/project metadata; raw SSH/HTTP/SQL surface оставлять для expert/debug path.",
         ],
     })
 }

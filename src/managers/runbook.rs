@@ -1,18 +1,20 @@
 use crate::errors::ToolError;
+use crate::mcp::tool_effects::resolve_tool_call_effects;
 use crate::services::logger::Logger;
 use crate::services::runbook::RunbookService;
 use crate::services::state::StateService;
 use crate::services::tool_executor::ToolExecutor;
 use crate::utils::data_path::get_path_value;
+use crate::utils::effects::{resolve_effects, Effects};
 use crate::utils::listing::ListFilters;
-use crate::utils::runbook_dsl::parse_runbook_dsl;
+use crate::utils::manifests::manifest_ref;
 use crate::utils::template::{resolve_template_string, resolve_templates};
 use crate::utils::tool_errors::unknown_action_error;
 use once_cell::sync::OnceCell;
 use serde_json::Value;
 use std::sync::{Arc, Weak};
 
-const RUNBOOK_ACTIONS: &[&str] = &[
+pub(crate) const RUNBOOK_ACTIONS: &[&str] = &[
     "runbook_upsert",
     "runbook_upsert_dsl",
     "runbook_get",
@@ -22,6 +24,48 @@ const RUNBOOK_ACTIONS: &[&str] = &[
     "runbook_run_dsl",
     "runbook_compile",
 ];
+
+fn merge_effects(mut base: Effects, other: Effects) -> Effects {
+    let base_kind = base.kind.as_deref().unwrap_or("read");
+    let other_kind = other.kind.as_deref().unwrap_or("read");
+    let merged_kind = if base_kind == "mixed" || other_kind == "mixed" {
+        "mixed"
+    } else if base_kind == "write" || other_kind == "write" {
+        "write"
+    } else {
+        "read"
+    };
+    base.kind = Some(merged_kind.to_string());
+    base.requires_apply = base.requires_apply || other.requires_apply;
+    base.irreversible = base.irreversible || other.irreversible;
+    base
+}
+
+fn infer_effects_from_steps(runbook: &Value) -> Effects {
+    let steps = runbook
+        .get("steps")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let mut out = Effects {
+        kind: Some("read".to_string()),
+        requires_apply: false,
+        irreversible: false,
+    };
+    for step in steps.iter() {
+        let tool = step.get("tool").and_then(|v| v.as_str()).unwrap_or("");
+        if tool.trim().is_empty() {
+            continue;
+        }
+        let args = step
+            .get("args")
+            .cloned()
+            .unwrap_or_else(|| Value::Object(Default::default()));
+        let resolved = resolve_tool_call_effects(tool, &args);
+        out = merge_effects(out, resolved.effects);
+    }
+    out
+}
 
 #[derive(Clone)]
 pub struct RunbookManager {
@@ -45,6 +89,40 @@ impl RunbookManager {
         }
     }
 
+    fn manifest_path_display(&self) -> String {
+        self.runbook_service.manifest_path().display().to_string()
+    }
+
+    fn compatibility_only_error(&self, action: &str, stage: &str) -> ToolError {
+        ToolError::invalid_params(format!(
+            "{} is compatibility-only and no longer supported in normal mode",
+            action
+        ))
+        .with_hint(format!(
+            "Move the runbook definition into {} and execute it via action=runbook_run with name=<runbook-name>.",
+            self.manifest_path_display()
+        ))
+        .with_details(serde_json::json!({
+            "stage": stage,
+            "action": action,
+            "manifest_path": self.manifest_path_display(),
+        }))
+    }
+
+    fn inline_runbook_error(&self) -> ToolError {
+        ToolError::invalid_params(
+            "inline runbook payloads are compatibility-only and no longer supported in normal mode",
+        )
+        .with_hint(format!(
+            "Save the runbook in {} and rerun with action=runbook_run plus name=<runbook-name>.",
+            self.manifest_path_display()
+        ))
+        .with_details(serde_json::json!({
+            "stage": "compatibility_runbook_inline",
+            "manifest_path": self.manifest_path_display(),
+        }))
+    }
+
     pub fn set_tool_executor(&self, tool_executor: Arc<ToolExecutor>) {
         let _ = self.tool_executor.set(Arc::downgrade(&tool_executor));
     }
@@ -53,19 +131,12 @@ impl RunbookManager {
         let action = args.get("action");
         match action.and_then(|v| v.as_str()).unwrap_or("") {
             "runbook_upsert" => {
-                let name = args.get("name").and_then(|v| v.as_str()).unwrap_or("");
-                let payload = args.get("runbook").cloned().unwrap_or(args.clone());
-                self.runbook_service.set_runbook(name, &payload)
+                Err(self
+                    .compatibility_only_error("runbook_upsert", "compatibility_runbook_mutation"))
             }
             "runbook_upsert_dsl" => {
-                let name = args.get("name").and_then(|v| v.as_str()).unwrap_or("");
-                let dsl = args
-                    .get("dsl")
-                    .or_else(|| args.get("text"))
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("");
-                let parsed = parse_runbook_dsl(dsl)?;
-                self.runbook_service.set_runbook(name, &parsed)
+                Err(self
+                    .compatibility_only_error("runbook_upsert_dsl", "compatibility_runbook_dsl"))
             }
             "runbook_get" => {
                 let name = args.get("name").and_then(|v| v.as_str()).unwrap_or("");
@@ -76,31 +147,15 @@ impl RunbookManager {
                 self.runbook_service.list_runbooks(&filters)
             }
             "runbook_delete" => {
-                let name = args.get("name").and_then(|v| v.as_str()).unwrap_or("");
-                self.runbook_service.delete_runbook(name)
+                Err(self
+                    .compatibility_only_error("runbook_delete", "compatibility_runbook_mutation"))
             }
             "runbook_compile" => {
-                let dsl = args
-                    .get("dsl")
-                    .or_else(|| args.get("text"))
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("");
-                let parsed = parse_runbook_dsl(dsl)?;
-                Ok(serde_json::json!({"success": true, "runbook": parsed}))
+                Err(self.compatibility_only_error("runbook_compile", "compatibility_runbook_dsl"))
             }
             "runbook_run" => self.runbook_run(args).await,
             "runbook_run_dsl" => {
-                let dsl = args
-                    .get("dsl")
-                    .or_else(|| args.get("text"))
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("");
-                let parsed = parse_runbook_dsl(dsl)?;
-                let mut next = args.clone();
-                if let Value::Object(map) = &mut next {
-                    map.insert("runbook".to_string(), parsed);
-                }
-                self.runbook_run(next).await
+                Err(self.compatibility_only_error("runbook_run_dsl", "compatibility_runbook_dsl"))
             }
             _ => Err(unknown_action_error("runbook", action, RUNBOOK_ACTIONS)),
         }
@@ -134,6 +189,11 @@ impl RunbookManager {
             .get("stop_on_error")
             .and_then(|v| v.as_bool())
             .unwrap_or(true);
+        let apply = args.get("apply").and_then(|v| v.as_bool()).unwrap_or(false);
+        let confirm = args
+            .get("confirm")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
         let template_missing = args
             .get("template_missing")
             .and_then(|v| v.as_str())
@@ -163,16 +223,23 @@ impl RunbookManager {
             }
         }
 
-        let runbook = if let Some(runbook) = args.get("runbook") {
-            runbook.clone()
-        } else if let Some(name) = args.get("name").and_then(|v| v.as_str()) {
-            let stored = self.runbook_service.get_runbook(name)?;
-            stored.get("runbook").cloned().unwrap_or(Value::Null)
-        } else {
-            return Err(ToolError::invalid_params(
-                "runbook_run requires name or runbook",
-            ));
-        };
+        if args.get("runbook").is_some() {
+            return Err(self.inline_runbook_error());
+        }
+
+        let name = args
+            .get("name")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| {
+                ToolError::invalid_params("runbook_run requires a manifest-backed runbook name")
+                    .with_hint(
+                        "Choose a runbook from action=runbook_list and rerun with that name."
+                            .to_string(),
+                    )
+            })?;
+        let runbook = self.runbook_service.resolve_runbook(name)?;
 
         let steps = runbook
             .get("steps")
@@ -185,6 +252,27 @@ impl RunbookManager {
             ));
         }
 
+        let effects = merge_effects(
+            resolve_effects(&runbook),
+            infer_effects_from_steps(&runbook),
+        );
+        if effects.requires_apply && !apply {
+            return Err(
+                ToolError::denied("Runbook requires apply=true for write/mixed effects").with_hint(
+                    "Rerun with apply=true if you intend to perform write operations.".to_string(),
+                ),
+            );
+        }
+        if effects.irreversible && !confirm {
+            return Err(ToolError::denied(
+                "Runbook requires confirm=true for irreversible effects",
+            )
+            .with_hint(
+                "Rerun with confirm=true if you understand this cannot be safely auto-rolled-back."
+                    .to_string(),
+            ));
+        }
+
         let mut results: Vec<Value> = Vec::new();
         let state_snapshot = self.state_service.dump(Some("any"))?;
         let mut context = serde_json::json!({
@@ -194,6 +282,8 @@ impl RunbookManager {
             "trace_id": trace_id,
             "span_id": span_id,
             "parent_span_id": parent_span_id,
+            "apply": apply,
+            "confirm": confirm,
         });
 
         for (index, step) in steps.iter().enumerate() {
@@ -235,6 +325,8 @@ impl RunbookManager {
                         return Ok(serde_json::json!({
                             "success": false,
                             "runbook": runbook.get("name").cloned().unwrap_or(Value::Null),
+                            "runbook_manifest": manifest_ref(&runbook),
+                            "effects": effects.to_value(),
                             "steps": results,
                             "error": err.message,
                             "trace_id": trace_id,
@@ -254,6 +346,8 @@ impl RunbookManager {
         Ok(serde_json::json!({
             "success": results.iter().all(|item| item.get("success").and_then(|v| v.as_bool()).unwrap_or(true)),
             "runbook": runbook.get("name").cloned().unwrap_or(Value::Null),
+            "runbook_manifest": manifest_ref(&runbook),
+            "effects": effects.to_value(),
             "steps": results,
             "trace_id": trace_id,
         }))
@@ -383,6 +477,14 @@ impl RunbookManager {
             .get("args")
             .cloned()
             .unwrap_or(Value::Object(Default::default()));
+        let runbook_apply = context
+            .get("apply")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let runbook_confirm = context
+            .get("confirm")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
         if let Some(foreach) = step.get("foreach") {
             let foreach_config = resolve_templates(foreach, context, missing)?;
             let items = foreach_config
@@ -400,7 +502,15 @@ impl RunbookManager {
                         Value::Number(serde_json::Number::from(idx as i64)),
                     );
                 }
-                let args_for_item = resolve_templates(&base_args, &item_context, missing)?;
+                let mut args_for_item = resolve_templates(&base_args, &item_context, missing)?;
+                if let Some(obj) = args_for_item.as_object_mut() {
+                    if !obj.contains_key("apply") {
+                        obj.insert("apply".to_string(), Value::Bool(runbook_apply));
+                    }
+                    if !obj.contains_key("confirm") {
+                        obj.insert("confirm".to_string(), Value::Bool(runbook_confirm));
+                    }
+                }
                 let output = tool_executor.execute(tool, args_for_item).await?;
                 results.push(output.get("result").cloned().unwrap_or(output));
             }
@@ -414,7 +524,15 @@ impl RunbookManager {
             }));
         }
 
-        let resolved_args = resolve_templates(&base_args, context, missing)?;
+        let mut resolved_args = resolve_templates(&base_args, context, missing)?;
+        if let Some(obj) = resolved_args.as_object_mut() {
+            if !obj.contains_key("apply") {
+                obj.insert("apply".to_string(), Value::Bool(runbook_apply));
+            }
+            if !obj.contains_key("confirm") {
+                obj.insert("confirm".to_string(), Value::Bool(runbook_confirm));
+            }
+        }
         let output = tool_executor.execute(tool, resolved_args).await?;
         Ok(serde_json::json!({
             "id": step_key,

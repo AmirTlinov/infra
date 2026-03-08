@@ -7,7 +7,7 @@ use crate::mcp::envelope::{
     build_ssh_exec_envelope,
 };
 use crate::mcp::protocol::{JsonRpcRequest, JsonRpcResponse};
-use crate::mcp::{help, legend};
+use crate::mcp::{help, legend, prompts, resources};
 use crate::services::tool_executor::ToolCallMeta;
 use crate::utils::arg_aliases::normalize_args_aliases;
 use crate::utils::artifacts::{
@@ -17,32 +17,73 @@ use crate::utils::artifacts::{
 use crate::utils::redact::redact_text;
 use serde_json::Value;
 use std::collections::HashSet;
+use std::io::ErrorKind;
 use std::sync::Arc;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, BufWriter};
+use tokio::io::{AsyncBufReadExt, AsyncWrite, AsyncWriteExt, BufReader, BufWriter};
 
 const PROTOCOL_VERSION: &str = "2025-06-18";
 const SERVER_NAME: &str = "infra";
-const SERVER_VERSION: &str = "7.0.1";
+const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 fn core_tool_names() -> HashSet<String> {
     HashSet::from([
         "help".to_string(),
         "legend".to_string(),
-        "mcp_workspace".to_string(),
-        "mcp_jobs".to_string(),
-        "mcp_artifacts".to_string(),
-        "mcp_project".to_string(),
+        "mcp_capability".to_string(),
+        "mcp_operation".to_string(),
+        "mcp_receipt".to_string(),
+        "mcp_policy".to_string(),
+        "mcp_profile".to_string(),
+        "mcp_target".to_string(),
     ])
 }
 
 fn resolve_tool_tier() -> String {
-    let raw = std::env::var("INFRA_TOOL_TIER").unwrap_or_else(|_| "full".to_string());
+    let raw = std::env::var("INFRA_TOOL_TIER").unwrap_or_else(|_| "core".to_string());
     let normalized = raw.trim().to_lowercase();
     if normalized == "core" {
         "core".to_string()
+    } else if normalized == "expert" || normalized == "full" {
+        "expert".to_string()
     } else {
-        "full".to_string()
+        "core".to_string()
     }
+}
+
+fn is_graceful_stdio_disconnect(err: &std::io::Error) -> bool {
+    matches!(
+        err.kind(),
+        ErrorKind::BrokenPipe
+            | ErrorKind::UnexpectedEof
+            | ErrorKind::ConnectionReset
+            | ErrorKind::ConnectionAborted
+    )
+}
+
+async fn write_jsonrpc_response<W: AsyncWrite + Unpin>(
+    writer: &mut BufWriter<W>,
+    response: &JsonRpcResponse,
+) -> Result<bool, ToolError> {
+    let payload = serde_json::to_string(response).unwrap_or_default();
+    if let Err(err) = writer.write_all(payload.as_bytes()).await {
+        if is_graceful_stdio_disconnect(&err) {
+            return Ok(false);
+        }
+        return Err(err.into());
+    }
+    if let Err(err) = writer.write_all(b"\n").await {
+        if is_graceful_stdio_disconnect(&err) {
+            return Ok(false);
+        }
+        return Err(err.into());
+    }
+    if let Err(err) = writer.flush().await {
+        if is_graceful_stdio_disconnect(&err) {
+            return Ok(false);
+        }
+        return Err(err.into());
+    }
+    Ok(true)
 }
 
 fn normalize_response_mode(value: &Value) -> Result<Option<String>, McpError> {
@@ -334,7 +375,11 @@ impl McpServer {
     async fn handle_initialize(&self) -> Value {
         serde_json::json!({
             "protocolVersion": PROTOCOL_VERSION,
-            "capabilities": {"tools": {"list": true, "call": true}},
+            "capabilities": {
+                "tools": {"list": true, "call": true},
+                "resources": {"list": true, "read": true},
+                "prompts": {"list": true, "get": true},
+            },
             "serverInfo": {"name": SERVER_NAME, "version": SERVER_VERSION},
         })
     }
@@ -343,6 +388,29 @@ impl McpServer {
         let tier = resolve_tool_tier();
         let tools = list_tools_for_openai(&tier, &core_tool_names());
         serde_json::json!({ "tools": tools })
+    }
+
+    async fn handle_resources_list(&self) -> Value {
+        resources::list_resources()
+    }
+
+    async fn handle_resources_read(&self, uri: &str) -> Result<Value, McpError> {
+        resources::read_resource(&self.app, uri)
+            .await
+            .map_err(|err| McpError::new(ErrorCode::InvalidParams, err.message))
+    }
+
+    async fn handle_prompts_list(&self) -> Value {
+        prompts::list_prompts()
+    }
+
+    async fn handle_prompts_get(&self, name: &str, arguments: Value) -> Result<Value, McpError> {
+        prompts::get_prompt(name, &arguments).ok_or_else(|| {
+            McpError::new(
+                ErrorCode::InvalidParams,
+                format!("Unknown prompt: {}", name),
+            )
+        })
     }
 
     async fn handle_tools_call(&self, name: &str, raw_args: Value) -> Result<Value, McpError> {
@@ -412,7 +480,6 @@ impl McpServer {
                         span_id: span_id.clone(),
                         parent_span_id: parent_span_id.clone(),
                         invoked_as: None,
-                        preset_name: None,
                     },
                 )
                 .await
@@ -431,31 +498,6 @@ impl McpServer {
                         span_id: span_id.clone(),
                         parent_span_id: parent_span_id.clone(),
                         invoked_as: None,
-                        preset_name: None,
-                    },
-                )
-                .await
-                .map_err(|err| map_tool_error(name, &err))?
-        } else if name == "mcp_runbook" || name == "runbook" {
-            let result = self
-                .app
-                .runbook_manager
-                .handle_action(args.clone())
-                .await
-                .map_err(|err| map_tool_error(name, &err))?;
-            self.app
-                .tool_executor
-                .wrap_result(
-                    name,
-                    &args,
-                    &result,
-                    ToolCallMeta {
-                        started_at,
-                        trace_id: trace_id.clone(),
-                        span_id: span_id.clone(),
-                        parent_span_id: parent_span_id.clone(),
-                        invoked_as: None,
-                        preset_name: None,
                     },
                 )
                 .await
@@ -593,6 +635,7 @@ impl McpServer {
         }
 
         Ok(serde_json::json!({
+            "structuredContent": envelope,
             "content": [ { "type": "text", "text": serde_json::to_string(&envelope).unwrap_or_else(|_| "{}".to_string()) } ]
         }))
     }
@@ -621,10 +664,9 @@ impl McpServer {
                         ErrorCode::ParseError.as_i32(),
                         "Parse error".to_string(),
                     );
-                    let payload = serde_json::to_string(&response).unwrap_or_default();
-                    writer.write_all(payload.as_bytes()).await?;
-                    writer.write_all(b"\n").await?;
-                    writer.flush().await?;
+                    if !write_jsonrpc_response(&mut writer, &response).await? {
+                        return Ok(());
+                    }
                     continue;
                 }
             };
@@ -637,10 +679,9 @@ impl McpServer {
                         ErrorCode::InvalidRequest.as_i32(),
                         "Invalid request".to_string(),
                     );
-                    let payload = serde_json::to_string(&response).unwrap_or_default();
-                    writer.write_all(payload.as_bytes()).await?;
-                    writer.write_all(b"\n").await?;
-                    writer.flush().await?;
+                    if !write_jsonrpc_response(&mut writer, &response).await? {
+                        return Ok(());
+                    }
                     continue;
                 }
             };
@@ -682,6 +723,65 @@ impl McpServer {
                     }
                     None => None,
                 },
+                "resources/list" => match request.id.clone() {
+                    Some(id) => Some(JsonRpcResponse::success(
+                        id,
+                        self.handle_resources_list().await,
+                    )),
+                    None => None,
+                },
+                "resources/read" => match request.id.clone() {
+                    Some(id) => {
+                        let params = request.params.as_object().cloned().unwrap_or_default();
+                        let uri = params.get("uri").and_then(|v| v.as_str()).unwrap_or("");
+                        if uri.is_empty() {
+                            Some(JsonRpcResponse::failure(
+                                id,
+                                ErrorCode::InvalidParams.as_i32(),
+                                "Missing resource uri".to_string(),
+                            ))
+                        } else {
+                            let result = match self.handle_resources_read(uri).await {
+                                Ok(value) => JsonRpcResponse::success(id, value),
+                                Err(err) => {
+                                    JsonRpcResponse::failure(id, err.code.as_i32(), err.message)
+                                }
+                            };
+                            Some(result)
+                        }
+                    }
+                    None => None,
+                },
+                "prompts/list" => match request.id.clone() {
+                    Some(id) => Some(JsonRpcResponse::success(
+                        id,
+                        self.handle_prompts_list().await,
+                    )),
+                    None => None,
+                },
+                "prompts/get" => match request.id.clone() {
+                    Some(id) => {
+                        let params = request.params.as_object().cloned().unwrap_or_default();
+                        let name = params.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                        if name.is_empty() {
+                            Some(JsonRpcResponse::failure(
+                                id,
+                                ErrorCode::InvalidParams.as_i32(),
+                                "Missing prompt name".to_string(),
+                            ))
+                        } else {
+                            let arguments = params.get("arguments").cloned().unwrap_or(Value::Null);
+                            let result = match self.handle_prompts_get(name, arguments).await {
+                                Ok(value) => JsonRpcResponse::success(id, value),
+                                Err(err) => {
+                                    JsonRpcResponse::failure(id, err.code.as_i32(), err.message)
+                                }
+                            };
+                            Some(result)
+                        }
+                    }
+                    None => None,
+                },
                 _ => request.id.clone().map(|id| {
                     JsonRpcResponse::failure(
                         id,
@@ -692,10 +792,9 @@ impl McpServer {
             };
 
             if let Some(response) = response {
-                let payload = serde_json::to_string(&response).unwrap_or_default();
-                writer.write_all(payload.as_bytes()).await?;
-                writer.write_all(b"\n").await?;
-                writer.flush().await?;
+                if !write_jsonrpc_response(&mut writer, &response).await? {
+                    return Ok(());
+                }
             }
         }
 
@@ -706,4 +805,427 @@ impl McpServer {
 pub async fn run_stdio() -> Result<(), ToolError> {
     let server = McpServer::new().await?;
     server.run_stdio().await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{is_graceful_stdio_disconnect, McpServer, SERVER_VERSION};
+    use once_cell::sync::Lazy;
+    use serde_json::json;
+    use std::io::ErrorKind;
+    use tokio::sync::Mutex;
+
+    static ENV_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
+
+    fn restore_env(key: &str, previous: Option<String>) {
+        match previous {
+            Some(value) => std::env::set_var(key, value),
+            None => std::env::remove_var(key),
+        }
+    }
+
+    #[test]
+    fn graceful_disconnect_kinds_are_recognized() {
+        for kind in [
+            ErrorKind::BrokenPipe,
+            ErrorKind::UnexpectedEof,
+            ErrorKind::ConnectionReset,
+            ErrorKind::ConnectionAborted,
+        ] {
+            let err = std::io::Error::from(kind);
+            assert!(is_graceful_stdio_disconnect(&err));
+        }
+        let other = std::io::Error::from(ErrorKind::PermissionDenied);
+        assert!(!is_graceful_stdio_disconnect(&other));
+    }
+
+    #[tokio::test]
+    async fn initialize_and_mcp_native_surfaces_are_wired() {
+        let _guard = ENV_LOCK.lock().await;
+
+        let prev_profiles = std::env::var("MCP_PROFILES_DIR").ok();
+        let tmp_dir =
+            std::env::temp_dir().join(format!("infra-server-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&tmp_dir).expect("create temp dir");
+        std::env::set_var("MCP_PROFILES_DIR", &tmp_dir);
+
+        let server = McpServer::new().await.expect("server");
+
+        let init = server.handle_initialize().await;
+        assert_eq!(
+            init.get("serverInfo")
+                .and_then(|v| v.get("version"))
+                .and_then(|v| v.as_str()),
+            Some(SERVER_VERSION)
+        );
+        assert_eq!(
+            init.get("capabilities")
+                .and_then(|v| v.get("resources"))
+                .and_then(|v| v.get("read"))
+                .and_then(|v| v.as_bool()),
+            Some(true)
+        );
+        assert_eq!(
+            init.get("capabilities")
+                .and_then(|v| v.get("prompts"))
+                .and_then(|v| v.get("get"))
+                .and_then(|v| v.as_bool()),
+            Some(true)
+        );
+
+        let resources = server.handle_resources_list().await;
+        let resource_uris = resources
+            .get("resources")
+            .and_then(|v| v.as_array())
+            .expect("resource catalog");
+        assert!(resource_uris.iter().any(|entry| {
+            entry.get("uri").and_then(|v| v.as_str()) == Some("infra://workspace/store")
+        }));
+
+        let store_resource = server
+            .handle_resources_read("infra://workspace/store")
+            .await
+            .expect("workspace/store resource");
+        let store_text = store_resource
+            .get("contents")
+            .and_then(|v| v.as_array())
+            .and_then(|arr| arr.first())
+            .and_then(|v| v.get("text"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        assert!(store_text.contains("\"primary_store\""));
+        assert!(store_text.contains("\"sqlite\""));
+
+        let prompts = server.handle_prompts_list().await;
+        let prompt_names = prompts
+            .get("prompts")
+            .and_then(|v| v.as_array())
+            .expect("prompt catalog");
+        assert!(prompt_names
+            .iter()
+            .any(|entry| { entry.get("name").and_then(|v| v.as_str()) == Some("deploy_service") }));
+
+        let prompt = server
+            .handle_prompts_get(
+                "deploy_service",
+                json!({ "target": "staging", "capability": "gitops.release" }),
+            )
+            .await
+            .expect("deploy prompt");
+        let prompt_text = prompt
+            .get("messages")
+            .and_then(|v| v.as_array())
+            .and_then(|arr| arr.first())
+            .and_then(|v| v.get("content"))
+            .and_then(|v| v.as_array())
+            .and_then(|arr| arr.first())
+            .and_then(|v| v.get("text"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        assert!(prompt_text.contains("staging"));
+        assert!(prompt_text.contains("gitops.release"));
+
+        restore_env("MCP_PROFILES_DIR", prev_profiles);
+        std::fs::remove_dir_all(&tmp_dir).ok();
+    }
+
+    #[tokio::test]
+    async fn tools_call_returns_structured_content_envelope() {
+        let _guard = ENV_LOCK.lock().await;
+
+        let prev_profiles = std::env::var("MCP_PROFILES_DIR").ok();
+        let tmp_dir =
+            std::env::temp_dir().join(format!("infra-server-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&tmp_dir).expect("create temp dir");
+        std::env::set_var("MCP_PROFILES_DIR", &tmp_dir);
+
+        let server = McpServer::new().await.expect("server");
+        let result = server
+            .handle_tools_call("help", serde_json::json!({}))
+            .await
+            .expect("help call");
+        let structured = result
+            .get("structuredContent")
+            .cloned()
+            .expect("structured content");
+        assert!(structured.get("tool").is_some());
+        let text = result
+            .get("content")
+            .and_then(|v| v.as_array())
+            .and_then(|arr| arr.first())
+            .and_then(|v| v.get("text"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let parsed_text: serde_json::Value =
+            serde_json::from_str(text).expect("json text envelope");
+        assert_eq!(structured, parsed_text);
+
+        restore_env("MCP_PROFILES_DIR", prev_profiles);
+        std::fs::remove_dir_all(&tmp_dir).ok();
+    }
+
+    #[tokio::test]
+    async fn tools_list_defaults_to_core_tier() {
+        let _guard = ENV_LOCK.lock().await;
+
+        let prev_profiles = std::env::var("MCP_PROFILES_DIR").ok();
+        let prev_tier = std::env::var("INFRA_TOOL_TIER").ok();
+        let tmp_dir =
+            std::env::temp_dir().join(format!("infra-server-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&tmp_dir).expect("create temp dir");
+        std::env::set_var("MCP_PROFILES_DIR", &tmp_dir);
+        std::env::remove_var("INFRA_TOOL_TIER");
+
+        let server = McpServer::new().await.expect("server");
+        let listed = server.handle_tools_list().await;
+        let names: Vec<String> = listed
+            .get("tools")
+            .and_then(|v| v.as_array())
+            .expect("tools array")
+            .iter()
+            .filter_map(|entry| {
+                entry
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string)
+            })
+            .collect();
+
+        assert!(names.contains(&"mcp_capability".to_string()));
+        assert!(names.contains(&"mcp_operation".to_string()));
+        assert!(names.contains(&"mcp_receipt".to_string()));
+        assert!(names.contains(&"mcp_policy".to_string()));
+        assert!(names.contains(&"mcp_profile".to_string()));
+        assert!(names.contains(&"mcp_target".to_string()));
+        assert!(!names.contains(&"mcp_project".to_string()));
+        assert!(!names.contains(&"mcp_jobs".to_string()));
+        assert!(!names.contains(&"mcp_artifacts".to_string()));
+        assert!(!names.contains(&"mcp_workspace".to_string()));
+        assert!(!names.contains(&"mcp_runbook".to_string()));
+        let capability_tool = listed
+            .get("tools")
+            .and_then(|v| v.as_array())
+            .and_then(|arr| {
+                arr.iter().find(|entry| {
+                    entry.get("name").and_then(|v| v.as_str()) == Some("mcp_capability")
+                })
+            })
+            .expect("capability tool");
+        let capability_actions: Vec<String> = capability_tool
+            .get("inputSchema")
+            .and_then(|v| v.get("properties"))
+            .and_then(|v| v.get("action"))
+            .and_then(|v| v.get("enum"))
+            .and_then(|v| v.as_array())
+            .expect("capability action enum")
+            .iter()
+            .filter_map(|v| v.as_str().map(str::to_string))
+            .collect();
+        assert!(!capability_actions.contains(&"set".to_string()));
+        assert!(!capability_actions.contains(&"delete".to_string()));
+
+        for (tool_name, expected) in [
+            ("mcp_receipt", vec!["list", "get"]),
+            ("mcp_policy", vec!["resolve", "evaluate"]),
+            ("mcp_profile", vec!["list", "get"]),
+            ("mcp_target", vec!["list", "get", "resolve"]),
+        ] {
+            let entry = listed
+                .get("tools")
+                .and_then(|v| v.as_array())
+                .and_then(|arr| {
+                    arr.iter()
+                        .find(|entry| entry.get("name").and_then(|v| v.as_str()) == Some(tool_name))
+                })
+                .unwrap_or_else(|| panic!("{} tool", tool_name));
+            let actions: Vec<String> = entry
+                .get("inputSchema")
+                .and_then(|v| v.get("properties"))
+                .and_then(|v| v.get("action"))
+                .and_then(|v| v.get("enum"))
+                .and_then(|v| v.as_array())
+                .expect("action enum")
+                .iter()
+                .filter_map(|v| v.as_str().map(str::to_string))
+                .collect();
+            assert_eq!(actions, expected, "{}", tool_name);
+        }
+
+        restore_env("INFRA_TOOL_TIER", prev_tier);
+        restore_env("MCP_PROFILES_DIR", prev_profiles);
+        std::fs::remove_dir_all(&tmp_dir).ok();
+    }
+
+    #[tokio::test]
+    async fn tools_list_expert_tier_restores_expanded_surface() {
+        let _guard = ENV_LOCK.lock().await;
+
+        let prev_profiles = std::env::var("MCP_PROFILES_DIR").ok();
+        let prev_tier = std::env::var("INFRA_TOOL_TIER").ok();
+        let tmp_dir =
+            std::env::temp_dir().join(format!("infra-server-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&tmp_dir).expect("create temp dir");
+        std::env::set_var("MCP_PROFILES_DIR", &tmp_dir);
+        std::env::set_var("INFRA_TOOL_TIER", "expert");
+
+        let server = McpServer::new().await.expect("server");
+        let listed = server.handle_tools_list().await;
+        let names: Vec<String> = listed
+            .get("tools")
+            .and_then(|v| v.as_array())
+            .expect("tools array")
+            .iter()
+            .filter_map(|entry| {
+                entry
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string)
+            })
+            .collect();
+
+        assert!(names.contains(&"mcp_workspace".to_string()));
+        assert!(names.contains(&"mcp_runbook".to_string()));
+        assert!(names.contains(&"mcp_receipt".to_string()));
+        assert!(names.contains(&"mcp_policy".to_string()));
+        assert!(names.contains(&"mcp_profile".to_string()));
+        assert!(names.contains(&"mcp_target".to_string()));
+
+        restore_env("INFRA_TOOL_TIER", prev_tier);
+        restore_env("MCP_PROFILES_DIR", prev_profiles);
+        std::fs::remove_dir_all(&tmp_dir).ok();
+    }
+
+    #[tokio::test]
+    async fn help_defaults_to_core_overview_surface() {
+        let _guard = ENV_LOCK.lock().await;
+
+        let prev_profiles = std::env::var("MCP_PROFILES_DIR").ok();
+        let prev_tier = std::env::var("INFRA_TOOL_TIER").ok();
+        let tmp_dir =
+            std::env::temp_dir().join(format!("infra-server-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&tmp_dir).expect("create temp dir");
+        std::env::set_var("MCP_PROFILES_DIR", &tmp_dir);
+        std::env::remove_var("INFRA_TOOL_TIER");
+
+        let server = McpServer::new().await.expect("server");
+        let help_result = server
+            .handle_tools_call("help", serde_json::json!({}))
+            .await
+            .expect("help");
+        let payload = help_result
+            .get("structuredContent")
+            .and_then(|v| v.get("result"))
+            .cloned()
+            .expect("help payload");
+        let tool_names: Vec<String> = payload
+            .get("tools")
+            .and_then(|v| v.as_array())
+            .expect("help tool list")
+            .iter()
+            .filter_map(|entry| {
+                entry
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string)
+            })
+            .collect();
+
+        assert!(tool_names.contains(&"mcp_capability".to_string()));
+        assert!(tool_names.contains(&"mcp_operation".to_string()));
+        assert!(tool_names.contains(&"mcp_receipt".to_string()));
+        assert!(tool_names.contains(&"mcp_policy".to_string()));
+        assert!(tool_names.contains(&"mcp_profile".to_string()));
+        assert!(tool_names.contains(&"mcp_target".to_string()));
+        assert!(!tool_names.contains(&"mcp_project".to_string()));
+        assert!(!tool_names.contains(&"mcp_workspace".to_string()));
+
+        restore_env("INFRA_TOOL_TIER", prev_tier);
+        restore_env("MCP_PROFILES_DIR", prev_profiles);
+        std::fs::remove_dir_all(&tmp_dir).ok();
+    }
+
+    #[tokio::test]
+    async fn help_capability_in_core_mode_hides_write_actions() {
+        let _guard = ENV_LOCK.lock().await;
+
+        let prev_profiles = std::env::var("MCP_PROFILES_DIR").ok();
+        let prev_tier = std::env::var("INFRA_TOOL_TIER").ok();
+        let tmp_dir =
+            std::env::temp_dir().join(format!("infra-server-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&tmp_dir).expect("create temp dir");
+        std::env::set_var("MCP_PROFILES_DIR", &tmp_dir);
+        std::env::remove_var("INFRA_TOOL_TIER");
+
+        let server = McpServer::new().await.expect("server");
+        let help_result = server
+            .handle_tools_call("help", serde_json::json!({ "tool": "mcp_capability" }))
+            .await
+            .expect("capability help");
+        let payload = help_result
+            .get("structuredContent")
+            .and_then(|v| v.get("result"))
+            .cloned()
+            .expect("help payload");
+        let actions: Vec<String> = payload
+            .get("actions")
+            .and_then(|v| v.as_array())
+            .expect("actions")
+            .iter()
+            .filter_map(|v| v.as_str().map(str::to_string))
+            .collect();
+
+        assert!(!actions.contains(&"set".to_string()));
+        assert!(!actions.contains(&"delete".to_string()));
+        assert_eq!(
+            payload.get("usage").and_then(|v| v.as_str()),
+            Some("list/get/resolve/families/suggest/graph/stats")
+        );
+
+        restore_env("INFRA_TOOL_TIER", prev_tier);
+        restore_env("MCP_PROFILES_DIR", prev_profiles);
+        std::fs::remove_dir_all(&tmp_dir).ok();
+    }
+
+    #[tokio::test]
+    async fn help_expert_overview_hides_legacy_discovery_tools() {
+        let _guard = ENV_LOCK.lock().await;
+
+        let prev_profiles = std::env::var("MCP_PROFILES_DIR").ok();
+        let prev_tier = std::env::var("INFRA_TOOL_TIER").ok();
+        let tmp_dir =
+            std::env::temp_dir().join(format!("infra-server-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&tmp_dir).expect("create temp dir");
+        std::env::set_var("MCP_PROFILES_DIR", &tmp_dir);
+        std::env::set_var("INFRA_TOOL_TIER", "expert");
+
+        let server = McpServer::new().await.expect("server");
+        let help_result = server
+            .handle_tools_call("help", serde_json::json!({}))
+            .await
+            .expect("help");
+        let payload = help_result
+            .get("structuredContent")
+            .and_then(|v| v.get("result"))
+            .cloned()
+            .expect("help payload");
+        let tool_names: Vec<String> = payload
+            .get("tools")
+            .and_then(|v| v.as_array())
+            .expect("help tool list")
+            .iter()
+            .filter_map(|entry| {
+                entry
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string)
+            })
+            .collect();
+
+        assert!(!tool_names.contains(&"mcp_intent".to_string()));
+        assert!(!tool_names.contains(&"mcp_pipeline".to_string()));
+
+        restore_env("INFRA_TOOL_TIER", prev_tier);
+        restore_env("MCP_PROFILES_DIR", prev_profiles);
+        std::fs::remove_dir_all(&tmp_dir).ok();
+    }
 }

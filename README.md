@@ -11,6 +11,9 @@ Most MCP tool servers give agents raw shell access and hope for the best. **Infr
 - **One server, full stack** — SSH, HTTP, Postgres, git, runbooks, state. No juggling 5 different MCP servers.  
 - **Audit by default** — Every call is logged with evidence/artifacts. You can always answer "what did the agent do?"  
 - **Safe-by-default execution** — Local exec and secret export are *disabled* unless you explicitly opt in. Agents can't escape the sandbox by accident.  
+- **Transactional store** — Mutable server state lives in a single SQLite store instead of whole-file JSON rewrites.  
+- **MCP-native context** — Canonical tools stay small; inventory/help surfaces are also exposed through MCP resources/prompts.  
+- **Low-entropy default surface** — `tools/list` defaults to the capability-first core surface; the wider expert plane is opt-in via `INFRA_TOOL_TIER=expert`.  
 
 Core engineering idea: **deterministic, auditable infrastructure actions** with the minimal surface area an agent actually needs.
 
@@ -73,6 +76,14 @@ cargo build --release
 ```json
 { "tool": "help", "args": { "query": "runbook" } }
 ```
+
+1) Baseline snapshot (optional, but recommended before major redesign work)
+
+```bash
+./tools/baseline --out .artifacts/baseline/current.json
+```
+
+This writes a generated snapshot of the **current checkout at execution time** (tool inventory, capabilities/runbooks inventory, versions, dirty diff, and gate entrypoints) so architecture docs do not need to embed stale “facts of today”.
 
 ## First run in 60 seconds
 
@@ -159,6 +170,26 @@ Then point Infra to your project:
 ```bash
 export MCP_PROFILES_DIR=/path/to/your/project/.infra
 ```
+
+Infra now uses a **single SQLite store** for mutable operational state under the profile base dir:
+
+- default path: `MCP_PROFILES_DIR/infra.db`
+- override: `MCP_STORE_DB_PATH=/custom/path/infra.db`
+
+Legacy JSON files such as `profiles.json`, `state.json`, `projects.json`, `aliases.json`, `presets.json`, and `jobs.json` are treated as **one-time import sources** for operational/local state, not the canonical writable store.
+
+`runbooks.json` and `capabilities.json` remain **file-backed manifests/defaults**. In normal mode, runbooks are resolved directly from these manifests: `runbook_run` is name-only and manifest-backed, while inline runbook payloads plus `runbook_upsert`, `runbook_upsert_dsl`, `runbook_delete`, `runbook_run_dsl`, and `runbook_compile` are compatibility-only migration paths that are intentionally rejected.
+
+Derived context is no longer persisted as writable truth: Infra computes it on demand and may reuse only a **process-local session cache** until `refresh=true`.
+
+## Tool surface tiers
+
+Infra now has two discovery modes:
+
+- **Default (`INFRA_TOOL_TIER=core`)** — low-entropy capability kernel surface (`help`, `legend`, `mcp_capability`, `mcp_operation`, `mcp_receipt`, `mcp_policy`, `mcp_profile`, `mcp_target`). Capability discovery is read-focused here; mutable compatibility actions stay off the main machine surface.
+- **Expert (`INFRA_TOOL_TIER=expert`)** — wider canonical surface for raw/debug/legacy flows (SSH, HTTP, SQL, runbook, audit, alias, preset compatibility storage, etc).
+
+Builtin aliases remain compatibility shims for explicit `tools/call`, but they are hidden from `tools/list`.
 
 ## Browsing artifacts
 
@@ -347,6 +378,12 @@ Make an HTTP request:
 { "tool": "http", "args": { "action": "request", "method": "GET", "url": "https://example.com/health" } }
 ```
 
+Same request with transient-channel resilience (quiet by default):
+
+```json
+{ "tool": "http", "args": { "action": "request", "method": "GET", "url": "https://example.com/health", "stability": "auto" } }
+```
+
 Query Postgres:
 
 ```json
@@ -359,44 +396,39 @@ Note: For exact tool names and schemas, use `help` or `tool_catalog.json`.
 
 ### GitOps: kustomize diff (requires `INFRA_UNSAFE_LOCAL=1` + kubectl)
 
-Define the runbook:
+Add this entry to `.infra/runbooks.json` (normal mode is manifest-backed; runtime upsert/delete/DSL paths are compatibility-only):
 
 ```json
 {
-  "tool": "runbook",
-  "args": {
-    "action": "upsert",
-    "name": "gitops.k8s.diff",
-    "runbook": {
-      "description": "Render kustomize overlay and diff against the cluster.",
-      "tags": ["gitops", "k8s", "read"],
-      "inputs": ["overlay", "kubeconfig"],
-      "steps": [
-        {
-          "id": "render",
-          "tool": "mcp_local",
-          "args": {
-            "action": "exec",
-            "command": "kubectl",
-            "args": ["kustomize", "{{ input.overlay }}"],
-            "env": { "KUBECONFIG": "{{ input.kubeconfig }}" },
-            "inline": true
-          }
-        },
-        {
-          "id": "diff",
-          "tool": "mcp_local",
-          "args": {
-            "action": "exec",
-            "command": "kubectl",
-            "args": ["diff", "-f", "-"],
-            "stdin": "{{ steps.render.stdout }}",
-            "env": { "KUBECONFIG": "{{ input.kubeconfig }}" },
-            "inline": true
-          }
+  "gitops.k8s.diff": {
+    "description": "Render kustomize overlay and diff against the cluster.",
+    "tags": ["gitops", "k8s", "read"],
+    "inputs": ["overlay", "kubeconfig"],
+    "steps": [
+      {
+        "id": "render",
+        "tool": "mcp_local",
+        "args": {
+          "action": "exec",
+          "command": "kubectl",
+          "args": ["kustomize", "{{ input.overlay }}"],
+          "env": { "KUBECONFIG": "{{ input.kubeconfig }}" },
+          "inline": true
         }
-      ]
-    }
+      },
+      {
+        "id": "diff",
+        "tool": "mcp_local",
+        "args": {
+          "action": "exec",
+          "command": "kubectl",
+          "args": ["diff", "-f", "-"],
+          "stdin": "{{ steps.render.stdout }}",
+          "env": { "KUBECONFIG": "{{ input.kubeconfig }}" },
+          "inline": true
+        }
+      }
+    ]
   }
 }
 ```
@@ -409,39 +441,34 @@ Run it:
 
 ### VPS: restart a service over SSH
 
-Define the runbook:
+Add this entry to `.infra/runbooks.json`:
 
 ```json
 {
-  "tool": "runbook",
-  "args": {
-    "action": "upsert",
-    "name": "vps.service.restart",
-    "runbook": {
-      "description": "Restart a systemd service and check status.",
-      "tags": ["vps", "ssh", "write"],
-      "inputs": ["target", "service"],
-      "steps": [
-        {
-          "id": "restart",
-          "tool": "ssh",
-          "args": {
-            "action": "exec",
-            "target": "{{ input.target }}",
-            "command": "sudo systemctl restart {{ input.service }}"
-          }
-        },
-        {
-          "id": "status",
-          "tool": "ssh",
-          "args": {
-            "action": "exec",
-            "target": "{{ input.target }}",
-            "command": "systemctl status {{ input.service }} --no-pager"
-          }
+  "vps.service.restart": {
+    "description": "Restart a systemd service and check status.",
+    "tags": ["vps", "ssh", "write"],
+    "inputs": ["target", "service"],
+    "steps": [
+      {
+        "id": "restart",
+        "tool": "ssh",
+        "args": {
+          "action": "exec",
+          "target": "{{ input.target }}",
+          "command": "sudo systemctl restart {{ input.service }}"
         }
-      ]
-    }
+      },
+      {
+        "id": "status",
+        "tool": "ssh",
+        "args": {
+          "action": "exec",
+          "target": "{{ input.target }}",
+          "command": "systemctl status {{ input.service }} --no-pager"
+        }
+      }
+    ]
   }
 }
 ```
@@ -454,33 +481,28 @@ Run it:
 
 ### DB: export a table to CSV
 
-Define the runbook:
+Add this entry to `.infra/runbooks.json`:
 
 ```json
 {
-  "tool": "runbook",
-  "args": {
-    "action": "upsert",
-    "name": "db.export.table",
-    "runbook": {
-      "description": "Export a table to CSV on the Infra host.",
-      "tags": ["db", "backup", "read"],
-      "inputs": ["profile_name", "table", "file_path"],
-      "steps": [
-        {
-          "id": "export",
-          "tool": "psql",
-          "args": {
-            "action": "export",
-            "profile_name": "{{ input.profile_name }}",
-            "table": "{{ input.table }}",
-            "file_path": "{{ input.file_path }}",
-            "format": "csv",
-            "csv_header": true
-          }
+  "db.export.table": {
+    "description": "Export a table to CSV on the Infra host.",
+    "tags": ["db", "backup", "read"],
+    "inputs": ["profile_name", "table", "file_path"],
+    "steps": [
+      {
+        "id": "export",
+        "tool": "psql",
+        "args": {
+          "action": "export",
+          "profile_name": "{{ input.profile_name }}",
+          "table": "{{ input.table }}",
+          "file_path": "{{ input.file_path }}",
+          "format": "csv",
+          "csv_header": true
         }
-      ]
-    }
+      }
+    ]
   }
 }
 ```
@@ -524,4 +546,7 @@ Yes — any MCP-compatible client. See [Client configs](#client-configs) for exa
 ## For contributors
 
 - `./tools/doctor` — diagnostics
-- `./tools/gate` — fmt + clippy + tests
+- `./tools/gate-docs` — docs/contracts gate only
+- `./tools/gate-code` — fmt + clippy + tests
+- `./tools/gate` — full gate (`gate-docs` + `gate-code`)
+- `./tools/baseline` — generated baseline snapshot for the current checkout

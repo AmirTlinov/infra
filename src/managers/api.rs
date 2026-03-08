@@ -14,6 +14,11 @@ use crate::utils::artifacts::{
 };
 use crate::utils::data_path::get_path_value;
 use crate::utils::redact::redact_text;
+use crate::utils::stability::{
+    apply_stability_source, classify_tool_error, compute_backoff_delay_ms, should_emit_stability,
+    StabilityClassification, StabilityDefaults, StabilityMeta, StabilityMode, StabilityPolicy,
+    StabilityPreset,
+};
 use crate::utils::tool_errors::unknown_action_error;
 use crate::utils::user_paths::expand_home_path;
 use base64::Engine;
@@ -28,7 +33,7 @@ use tokio::io::AsyncWriteExt;
 use url::Url;
 
 const API_PROFILE_TYPE: &str = "api";
-const API_ACTIONS: &[&str] = &[
+pub(crate) const API_ACTIONS: &[&str] = &[
     "profile_upsert",
     "profile_get",
     "profile_list",
@@ -50,6 +55,7 @@ pub struct ApiManager {
     secret_ref_resolver: Option<Arc<SecretRefResolver>>,
     clients: Arc<Mutex<HashMap<(bool, bool), Client>>>,
     token_cache: Arc<Mutex<HashMap<String, CachedToken>>>,
+    circuits: Arc<Mutex<HashMap<String, Instant>>>,
 }
 
 #[derive(Clone)]
@@ -75,6 +81,7 @@ struct CachePolicy {
 #[derive(Clone, Debug)]
 pub(crate) struct RetryPolicy {
     pub(crate) enabled: bool,
+    pub(crate) mode: StabilityMode,
     pub(crate) max_attempts: usize,
     pub(crate) base_delay_ms: u64,
     pub(crate) max_delay_ms: u64,
@@ -83,6 +90,7 @@ pub(crate) struct RetryPolicy {
     pub(crate) methods: Option<Vec<String>>,
     pub(crate) retry_on_network_error: bool,
     pub(crate) respect_retry_after: bool,
+    pub(crate) circuit_open_ms: u64,
 }
 
 #[derive(Clone, Debug)]
@@ -138,6 +146,7 @@ impl ApiManager {
             secret_ref_resolver,
             clients: Arc::new(Mutex::new(HashMap::new())),
             token_cache: Arc::new(Mutex::new(HashMap::new())),
+            circuits: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -187,6 +196,9 @@ impl ApiManager {
         }
         if let Some(retry) = args.get("retry") {
             data.insert("retry".to_string(), retry.clone());
+        }
+        if let Some(stability) = args.get("stability") {
+            data.insert("stability".to_string(), stability.clone());
         }
         if let Some(pagination) = args.get("pagination") {
             data.insert("pagination".to_string(), pagination.clone());
@@ -561,20 +573,39 @@ impl ApiManager {
         let policy = self.normalize_retry_policy(
             args.get("retry"),
             profile.retry.as_ref(),
+            args.get("stability"),
+            profile.data.get("stability"),
             args.get("method"),
         );
-        if !policy.enabled {
-            return self.download_once(&args, &profile, auth.as_ref()).await;
+        let debug_requested = stability_debug_requested(&args);
+        let circuit_key = self.build_stability_key(&args, &profile, "download");
+        if policy.enabled && policy.circuit_open_ms > 0 {
+            if let Some(remaining_ms) = self.circuit_remaining_ms(&circuit_key) {
+                return Err(self.circuit_open_error("HTTP download", remaining_ms));
+            }
         }
 
         let mut attempt = 0;
         let mut last_error: Option<ToolError> = None;
-        while attempt < policy.max_attempts {
+        let max_attempts = if policy.enabled {
+            policy.max_attempts.max(1)
+        } else {
+            1
+        };
+
+        while attempt < max_attempts {
             attempt += 1;
             match self.download_once(&args, &profile, auth.as_ref()).await {
                 Ok(response) => {
-                    let should_retry = self.should_retry_response(&response, &policy);
-                    if !should_retry || attempt >= policy.max_attempts {
+                    let should_retry =
+                        policy.enabled && self.should_retry_response(&response, &policy);
+                    if !should_retry || attempt >= max_attempts {
+                        if should_retry && policy.circuit_open_ms > 0 {
+                            self.open_circuit(&circuit_key, policy.circuit_open_ms);
+                        } else {
+                            self.close_circuit(&circuit_key);
+                        }
+
                         let mut out = response;
                         if let Value::Object(map) = &mut out {
                             map.insert(
@@ -585,6 +616,20 @@ impl ApiManager {
                                 "retries".to_string(),
                                 Value::Number(((attempt - 1) as u64).into()),
                             );
+                            let stability = StabilityMeta {
+                                retried: attempt > 1,
+                                attempts: attempt,
+                                classification: if should_retry {
+                                    StabilityClassification::Transient
+                                } else {
+                                    StabilityClassification::None
+                                },
+                                next_retry_after_ms: None,
+                                debug_ref: None,
+                            };
+                            if should_emit_stability(&stability, debug_requested) {
+                                map.insert("stability".to_string(), stability.to_value());
+                            }
                         }
                         return Ok(out);
                     }
@@ -597,8 +642,23 @@ impl ApiManager {
                 }
                 Err(err) => {
                     last_error = Some(err.clone());
-                    if !policy.retry_on_network_error || attempt >= policy.max_attempts {
-                        return Err(err);
+                    let classification = classify_tool_error(&err);
+                    let retryable = classification == StabilityClassification::Transient
+                        && policy.retry_on_network_error
+                        && policy.enabled;
+                    if !retryable || attempt >= max_attempts {
+                        if classification == StabilityClassification::Transient
+                            && policy.circuit_open_ms > 0
+                        {
+                            self.open_circuit(&circuit_key, policy.circuit_open_ms);
+                        }
+                        return Err(self.decorate_retry_error(
+                            err,
+                            "HTTP download",
+                            attempt,
+                            max_attempts,
+                            classification,
+                        ));
                     }
                     let delay = self.compute_retry_delay(attempt, &policy, None);
                     tokio::time::sleep(Duration::from_millis(delay)).await;
@@ -613,12 +673,24 @@ impl ApiManager {
         match self.request(merge_action(&args, "request", "GET")).await {
             Ok(result) => {
                 let status = result.get("status").and_then(|v| v.as_u64()).unwrap_or(0) as i64;
-                Ok(serde_json::json!({
+                let mut out = serde_json::json!({
                     "success": true,
                     "accessible": status < 500,
                     "status": status,
                     "response": result.get("data").cloned().or_else(|| result.get("body_base64").cloned()).unwrap_or(Value::Null),
-                }))
+                });
+                if let Some(map) = out.as_object_mut() {
+                    if let Some(attempts) = result.get("attempts") {
+                        map.insert("attempts".to_string(), attempts.clone());
+                    }
+                    if let Some(retries) = result.get("retries") {
+                        map.insert("retries".to_string(), retries.clone());
+                    }
+                    if let Some(stability) = result.get("stability") {
+                        map.insert("stability".to_string(), stability.clone());
+                    }
+                }
+                Ok(out)
             }
             Err(err) => Ok(serde_json::json!({
                 "success": false,
@@ -888,22 +960,38 @@ impl ApiManager {
         let policy = self.normalize_retry_policy(
             args.get("retry"),
             profile.retry.as_ref(),
+            args.get("stability"),
+            profile.data.get("stability"),
             args.get("method"),
         );
-        if !policy.enabled {
-            return self.request_once(args, profile, auth, None).await;
+        let debug_requested = stability_debug_requested(args);
+        let circuit_key = self.build_stability_key(args, profile, "request");
+        if policy.enabled && policy.circuit_open_ms > 0 {
+            if let Some(remaining_ms) = self.circuit_remaining_ms(&circuit_key) {
+                return Err(self.circuit_open_error("HTTP request", remaining_ms));
+            }
         }
 
         let mut attempt = 0;
         let mut last_error: Option<ToolError> = None;
+        let max_attempts = if policy.enabled {
+            policy.max_attempts.max(1)
+        } else {
+            1
+        };
 
-        while attempt < policy.max_attempts {
+        while attempt < max_attempts {
             attempt += 1;
             match self.request_once(args, profile, auth, None).await {
                 Ok(response) => {
-                    if !self.should_retry_response(&response, &policy)
-                        || attempt >= policy.max_attempts
-                    {
+                    let should_retry =
+                        policy.enabled && self.should_retry_response(&response, &policy);
+                    if !should_retry || attempt >= max_attempts {
+                        if should_retry && policy.circuit_open_ms > 0 {
+                            self.open_circuit(&circuit_key, policy.circuit_open_ms);
+                        } else {
+                            self.close_circuit(&circuit_key);
+                        }
                         let mut out = response;
                         if let Value::Object(map) = &mut out {
                             map.insert(
@@ -914,6 +1002,20 @@ impl ApiManager {
                                 "retries".to_string(),
                                 Value::Number(((attempt - 1) as u64).into()),
                             );
+                            let stability = StabilityMeta {
+                                retried: attempt > 1,
+                                attempts: attempt,
+                                classification: if should_retry {
+                                    StabilityClassification::Transient
+                                } else {
+                                    StabilityClassification::None
+                                },
+                                next_retry_after_ms: None,
+                                debug_ref: None,
+                            };
+                            if should_emit_stability(&stability, debug_requested) {
+                                map.insert("stability".to_string(), stability.to_value());
+                            }
                         }
                         return Ok(out);
                     }
@@ -924,8 +1026,23 @@ impl ApiManager {
                 }
                 Err(err) => {
                     last_error = Some(err.clone());
-                    if !policy.retry_on_network_error || attempt >= policy.max_attempts {
-                        return Err(err);
+                    let classification = classify_tool_error(&err);
+                    let retryable = classification == StabilityClassification::Transient
+                        && policy.retry_on_network_error
+                        && policy.enabled;
+                    if !retryable || attempt >= max_attempts {
+                        if classification == StabilityClassification::Transient
+                            && policy.circuit_open_ms > 0
+                        {
+                            self.open_circuit(&circuit_key, policy.circuit_open_ms);
+                        }
+                        return Err(self.decorate_retry_error(
+                            err,
+                            "HTTP request",
+                            attempt,
+                            max_attempts,
+                            classification,
+                        ));
                     }
                     let delay = self.compute_retry_delay(attempt, &policy, None);
                     tokio::time::sleep(Duration::from_millis(delay)).await;
@@ -1257,10 +1374,13 @@ impl ApiManager {
         &self,
         request: Option<&Value>,
         profile: Option<&Value>,
+        request_stability: Option<&Value>,
+        profile_stability: Option<&Value>,
         method: Option<&Value>,
     ) -> RetryPolicy {
         let mut policy = RetryPolicy {
             enabled: true,
+            mode: StabilityMode::Auto,
             max_attempts: retry_constants::MAX_ATTEMPTS,
             base_delay_ms: retry_constants::BASE_DELAY_MS,
             max_delay_ms: retry_constants::MAX_DELAY_MS,
@@ -1269,6 +1389,7 @@ impl ApiManager {
             methods: None,
             retry_on_network_error: true,
             respect_retry_after: true,
+            circuit_open_ms: 5_000,
         };
 
         if let Some(profile) = profile {
@@ -1278,12 +1399,37 @@ impl ApiManager {
             apply_retry_policy(&mut policy, request);
         }
 
+        let defaults = api_stability_defaults();
+        let mut stability_policy = StabilityPolicy {
+            enabled: policy.enabled,
+            mode: policy.mode,
+            max_attempts: policy.max_attempts,
+            base_delay_ms: policy.base_delay_ms,
+            max_delay_ms: policy.max_delay_ms,
+            jitter: policy.jitter,
+            circuit_open_ms: policy.circuit_open_ms,
+        };
+        apply_stability_source(&mut stability_policy, profile_stability, defaults);
+        apply_stability_source(&mut stability_policy, request_stability, defaults);
+
+        policy.enabled = stability_policy.enabled;
+        policy.mode = stability_policy.mode;
+        policy.max_attempts = stability_policy.max_attempts.max(1);
+        policy.base_delay_ms = stability_policy.base_delay_ms;
+        policy.max_delay_ms = stability_policy.max_delay_ms.max(policy.base_delay_ms);
+        policy.jitter = stability_policy.jitter;
+        policy.circuit_open_ms = stability_policy.circuit_open_ms;
+
         if let Some(method) = method.and_then(|v| v.as_str()) {
             if let Some(methods) = policy.methods.as_ref() {
                 if !methods.iter().any(|m| m.eq_ignore_ascii_case(method)) {
                     policy.enabled = false;
                 }
             }
+        }
+
+        if !policy.enabled {
+            policy.max_attempts = 1;
         }
 
         policy
@@ -1404,18 +1550,12 @@ impl ApiManager {
         policy: &RetryPolicy,
         response: Option<&Value>,
     ) -> u64 {
-        let base = policy.base_delay_ms;
-        let factor: f64 = 2.0;
-        let max_delay = policy.max_delay_ms;
-        let jitter = policy.jitter;
-        let mut delay = (base as f64) * factor.powi((attempt.saturating_sub(1)) as i32);
-        if delay > max_delay as f64 {
-            delay = max_delay as f64;
-        }
-        if jitter > 0.0 {
-            let delta = delay * jitter;
-            delay = delay - delta + rand::random::<f64>() * delta * 2.0;
-        }
+        let mut delay = compute_backoff_delay_ms(
+            attempt,
+            policy.base_delay_ms,
+            policy.max_delay_ms,
+            policy.jitter,
+        );
 
         if policy.respect_retry_after {
             if let Some(response) = response {
@@ -1426,8 +1566,8 @@ impl ApiManager {
                         .and_then(|v| v.as_str())
                     {
                         if let Ok(parsed) = retry_after.parse::<u64>() {
-                            if parsed > delay as u64 {
-                                delay = parsed as f64;
+                            if parsed > delay {
+                                delay = parsed;
                             }
                         }
                     }
@@ -1435,7 +1575,91 @@ impl ApiManager {
             }
         }
 
-        delay.max(0.0) as u64
+        delay
+    }
+
+    fn build_stability_key(&self, args: &Value, profile: &ApiProfile, scope: &str) -> String {
+        let method = args
+            .get("method")
+            .and_then(|v| v.as_str())
+            .unwrap_or("GET")
+            .to_uppercase();
+        if let Ok(url) = build_url(
+            args.get("base_url")
+                .and_then(|v| v.as_str())
+                .or_else(|| profile.data.get("base_url").and_then(|v| v.as_str())),
+            args.get("path"),
+            args.get("query"),
+            args.get("url"),
+        ) {
+            if let Ok(parsed) = parse_url(&url) {
+                if let Some(host) = parsed.host_str() {
+                    let port = parsed.port_or_known_default().unwrap_or(0);
+                    return format!("api:{}:{}:{}:{}", scope, method, host, port);
+                }
+            }
+        }
+        if let Some(name) = profile.name.as_deref() {
+            return format!("api:{}:{}:profile:{}", scope, method, name);
+        }
+        format!("api:{}:{}:global", scope, method)
+    }
+
+    fn circuit_remaining_ms(&self, key: &str) -> Option<u64> {
+        let now = Instant::now();
+        let mut guard = self.circuits.lock().ok()?;
+        let until = guard.get(key).copied()?;
+        if until <= now {
+            guard.remove(key);
+            return None;
+        }
+        Some((until - now).as_millis() as u64)
+    }
+
+    fn open_circuit(&self, key: &str, duration_ms: u64) {
+        if duration_ms == 0 {
+            return;
+        }
+        if let Ok(mut guard) = self.circuits.lock() {
+            guard.insert(
+                key.to_string(),
+                Instant::now() + Duration::from_millis(duration_ms),
+            );
+        }
+    }
+
+    fn close_circuit(&self, key: &str) {
+        if let Ok(mut guard) = self.circuits.lock() {
+            guard.remove(key);
+        }
+    }
+
+    fn circuit_open_error(&self, scope: &str, remaining_ms: u64) -> ToolError {
+        ToolError::retryable(format!(
+            "{} circuit is open for another {}ms",
+            scope, remaining_ms
+        ))
+        .with_hint(
+            "Transient upstream failure budget exceeded recently; retry later or set stability=off."
+                .to_string(),
+        )
+    }
+
+    fn decorate_retry_error(
+        &self,
+        err: ToolError,
+        scope: &str,
+        attempt: usize,
+        max_attempts: usize,
+        classification: StabilityClassification,
+    ) -> ToolError {
+        if classification != StabilityClassification::Transient {
+            return err;
+        }
+        err.with_hint(format!(
+            "{} exhausted retry budget ({}/{}) due to transient errors.",
+            scope, attempt, max_attempts
+        ))
     }
 
     pub(crate) async fn resolve_auth_provider(
@@ -2323,6 +2547,40 @@ fn scheme_allowed(scheme: &str) -> bool {
         .any(|allowed| allowed.trim_end_matches(':') == normalized)
 }
 
+fn api_stability_defaults() -> StabilityDefaults {
+    StabilityDefaults {
+        auto: StabilityPreset {
+            max_attempts: retry_constants::MAX_ATTEMPTS,
+            base_delay_ms: retry_constants::BASE_DELAY_MS,
+            max_delay_ms: retry_constants::MAX_DELAY_MS,
+            jitter: retry_constants::JITTER,
+            circuit_open_ms: 5_000,
+        },
+        aggressive: StabilityPreset {
+            max_attempts: retry_constants::MAX_ATTEMPTS + 2,
+            base_delay_ms: 200,
+            max_delay_ms: 6_000,
+            jitter: 0.3,
+            circuit_open_ms: 10_000,
+        },
+    }
+}
+
+fn stability_debug_requested(args: &Value) -> bool {
+    if args
+        .get("stability_debug")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+    {
+        return true;
+    }
+    args.get("stability")
+        .and_then(|v| v.as_object())
+        .and_then(|v| v.get("debug"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+}
+
 fn apply_retry_policy(policy: &mut RetryPolicy, source: &Value) {
     if source.is_null() {
         return;
@@ -2365,6 +2623,9 @@ fn apply_retry_policy(policy: &mut RetryPolicy, source: &Value) {
     }
     if let Some(respect_retry_after) = source.get("respect_retry_after").and_then(|v| v.as_bool()) {
         policy.respect_retry_after = respect_retry_after;
+    }
+    if let Some(circuit_open_ms) = source.get("circuit_open_ms").and_then(|v| v.as_u64()) {
+        policy.circuit_open_ms = circuit_open_ms;
     }
 }
 

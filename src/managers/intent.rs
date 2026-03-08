@@ -10,15 +10,15 @@ use crate::services::security::Security;
 use crate::services::state::StateService;
 use crate::services::tool_executor::{ToolExecutor, ToolHandler};
 use crate::services::validation::Validation;
+use crate::utils::manifests::manifest_ref;
 use crate::utils::tool_errors::unknown_action_error;
-use crate::utils::when_matcher::matches_when;
 use once_cell::sync::OnceCell;
 use regex::Regex;
 use serde_json::Value;
 use std::collections::HashSet;
 use std::sync::{Arc, Weak};
 
-const INTENT_ACTIONS: &[&str] = &["compile", "dry_run", "execute", "explain"];
+pub(crate) const INTENT_ACTIONS: &[&str] = &["compile", "dry_run", "execute", "explain"];
 
 #[derive(Clone)]
 pub struct IntentManager {
@@ -165,6 +165,10 @@ impl IntentManager {
                     .and_then(|v| v.as_bool())
                     .unwrap_or(false)
             });
+        let confirm = args
+            .get("confirm")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
 
         if plan
             .get("effects")
@@ -178,6 +182,23 @@ impl IntentManager {
                     "Rerun with apply=true if you intend to perform write operations.".to_string(),
                 ),
             );
+        }
+
+        if apply
+            && plan
+                .get("effects")
+                .and_then(|v| v.get("irreversible"))
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false)
+            && !confirm
+        {
+            return Err(ToolError::denied(
+                "Intent requires confirm=true for irreversible effects",
+            )
+            .with_hint(
+                "Rerun with confirm=true if you understand this cannot be safely auto-rolled-back."
+                    .to_string(),
+            ));
         }
 
         let intent_type = plan
@@ -273,9 +294,20 @@ impl IntentManager {
         for step in steps.iter() {
             let runbook = step.get("runbook").and_then(|v| v.as_str()).unwrap_or("");
             let inputs = step.get("inputs").cloned().unwrap_or(Value::Null);
-            self.runbook_service
-                .get_runbook(runbook)
-                .map_err(|_| ToolError::not_found(format!("Runbook '{}' not found", runbook)))?;
+            let resolved_runbook =
+                self.runbook_service
+                    .resolve_runbook(runbook)
+                    .map_err(|err| {
+                        if err.kind == crate::errors::ToolErrorKind::NotFound {
+                            ToolError::not_found(format!("Runbook '{}' not found", runbook))
+                                .with_hint(
+                                "Declare the runbook in a manifest-backed runbooks.json and retry."
+                                    .to_string(),
+                            )
+                        } else {
+                            err
+                        }
+                    })?;
 
             let outcome = runbook_manager
                 .handle_action(serde_json::json!({
@@ -283,6 +315,8 @@ impl IntentManager {
                 "name": runbook,
                 "input": inputs.clone(),
                 "stop_on_error": stop_on_error,
+                "apply": apply,
+                "confirm": confirm,
                 "template_missing": args.get("template_missing").cloned().unwrap_or(Value::String("error".to_string())),
                 "trace_id": trace_id,
                 "span_id": args.get("span_id").cloned().unwrap_or(Value::Null),
@@ -292,7 +326,15 @@ impl IntentManager {
 
             results.push(serde_json::json!({
                 "capability": step.get("capability").cloned().unwrap_or(Value::Null),
+                "capability_manifest": step
+                    .get("capability_manifest")
+                    .cloned()
+                    .unwrap_or(Value::Null),
                 "runbook": runbook,
+                "runbook_manifest": step
+                    .get("runbook_manifest")
+                    .cloned()
+                    .unwrap_or_else(|| manifest_ref(&resolved_runbook)),
                 "result": outcome,
             }));
 
@@ -503,43 +545,8 @@ impl IntentManager {
         intent_type: &str,
         context: Option<&Value>,
     ) -> Result<Value, ToolError> {
-        let candidates = self.capability_service.find_all_by_intent(intent_type)?;
-        if candidates.is_empty() {
-            return Err(ToolError::not_found(format!(
-                "Capability for intent '{}' not found",
-                intent_type
-            ))
-            .with_hint(
-                "Check capabilities.json (or configure capability mappings) and retry.".to_string(),
-            )
-            .with_details(serde_json::json!({"intent_type": intent_type})));
-        }
-        let context_value = context
-            .cloned()
-            .unwrap_or(Value::Object(Default::default()));
-        let mut matched: Vec<Value> = Vec::new();
-        for candidate in candidates {
-            let when = candidate.get("when").cloned().unwrap_or(Value::Null);
-            if matches_when(&when, &context_value) {
-                matched.push(candidate);
-            }
-        }
-        if matched.is_empty() {
-            return Err(ToolError::not_found(format!("No capability matched when-clause for intent '{}'", intent_type))
-                .with_hint("Provide the required context inputs (project/target/repo_root/etc) or adjust capability.when clauses.".to_string())
-                .with_details(serde_json::json!({"intent_type": intent_type})));
-        }
-        matched.sort_by(|a, b| {
-            let a_name = a.get("name").and_then(|v| v.as_str()).unwrap_or("");
-            let b_name = b.get("name").and_then(|v| v.as_str()).unwrap_or("");
-            let a_direct = if a_name == intent_type { 0 } else { 1 };
-            let b_direct = if b_name == intent_type { 0 } else { 1 };
-            if a_direct != b_direct {
-                return a_direct.cmp(&b_direct);
-            }
-            a_name.cmp(b_name)
-        });
-        Ok(matched[0].clone())
+        self.capability_service
+            .resolve_by_intent(intent_type, context)
     }
 
     async fn resolve_dependencies(&self, root_name: &str) -> Result<Vec<Value>, ToolError> {
@@ -633,9 +640,20 @@ impl IntentManager {
             }
 
             let effects = capability.get("effects").cloned().unwrap_or(Value::Null);
+            let runbook_name = capability
+                .get("runbook")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let runbook_manifest = if runbook_name.is_empty() {
+                Value::Null
+            } else {
+                manifest_ref(&self.runbook_service.resolve_runbook(runbook_name)?)
+            };
             steps.push(serde_json::json!({
                 "capability": capability.get("name").cloned().unwrap_or(Value::Null),
+                "capability_manifest": manifest_ref(capability),
                 "runbook": capability.get("runbook").cloned().unwrap_or(Value::Null),
+                "runbook_manifest": runbook_manifest,
                 "inputs": Value::Object(resolved_inputs.clone()),
                 "effects": effects,
             }));
@@ -768,6 +786,7 @@ fn normalize_inputs(
 
 fn aggregate_effects(steps: &[Value]) -> Value {
     let mut requires_apply = false;
+    let mut irreversible = false;
     let mut kind = "read";
     for step in steps {
         let effects = step
@@ -783,7 +802,17 @@ fn aggregate_effects(steps: &[Value]) -> Value {
             .get("requires_apply")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
+        let effect_irreversible = effects
+            .get("irreversible")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        if effect_irreversible {
+            irreversible = true;
+        }
         if effect_requires || effect_kind == "write" || effect_kind == "mixed" {
+            requires_apply = true;
+        }
+        if effect_irreversible {
             requires_apply = true;
         }
         if effect_kind == "mixed" {
@@ -792,7 +821,7 @@ fn aggregate_effects(steps: &[Value]) -> Value {
             kind = "write";
         }
     }
-    serde_json::json!({"kind": kind, "requires_apply": requires_apply})
+    serde_json::json!({"kind": kind, "requires_apply": requires_apply, "irreversible": irreversible})
 }
 
 fn redact_value(value: &Value) -> Value {

@@ -4,10 +4,11 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::errors::ToolError;
+use crate::mcp::catalog::validate_tool_args;
+use crate::mcp::tool_effects;
 use crate::services::alias::AliasService;
 use crate::services::audit::AuditService;
 use crate::services::logger::Logger;
-use crate::services::preset::PresetService;
 use crate::services::state::StateService;
 use crate::utils::artifacts::{
     build_tool_call_file_ref, resolve_context_root, write_text_artifact,
@@ -30,7 +31,6 @@ pub struct ToolExecutor {
     logger: Logger,
     state_service: Arc<StateService>,
     alias_service: Option<Arc<AliasService>>,
-    preset_service: Option<Arc<PresetService>>,
     audit_service: Option<Arc<AuditService>>,
     handlers: Arc<HashMap<String, Arc<dyn ToolHandler>>>,
     alias_map: HashMap<String, String>,
@@ -43,7 +43,6 @@ pub(crate) struct ToolCallMeta {
     pub span_id: String,
     pub parent_span_id: Option<String>,
     pub invoked_as: Option<String>,
-    pub preset_name: Option<String>,
 }
 
 impl ToolExecutor {
@@ -51,7 +50,6 @@ impl ToolExecutor {
         logger: Logger,
         state_service: Arc<StateService>,
         alias_service: Option<Arc<AliasService>>,
-        preset_service: Option<Arc<PresetService>>,
         audit_service: Option<Arc<AuditService>>,
         handlers: HashMap<String, Arc<dyn ToolHandler>>,
         alias_map: HashMap<String, String>,
@@ -60,7 +58,6 @@ impl ToolExecutor {
             logger: logger.child("executor"),
             state_service,
             alias_service,
-            preset_service,
             audit_service,
             handlers: Arc::new(handlers),
             alias_map,
@@ -129,38 +126,13 @@ impl ToolExecutor {
         None
     }
 
-    fn normalize_preset_data(&self, preset: Option<Value>) -> Option<Value> {
-        let preset = preset?;
-        if let Some(data) = preset.get("data") {
-            if data.is_object() {
-                return Some(data.clone());
-            }
-        }
-        if let Some(obj) = preset.as_object() {
-            let mut out = obj.clone();
-            out.remove("created_at");
-            out.remove("updated_at");
-            out.remove("description");
-            return Some(Value::Object(out));
-        }
-        None
-    }
-
     fn normalize_alias_args(&self, alias: Option<&Value>) -> Option<Value> {
         let alias = alias?;
         alias.get("args").cloned().filter(|v| v.is_object())
     }
 
-    fn merge_args(
-        &self,
-        preset: Option<&Value>,
-        alias_args: Option<&Value>,
-        args: &Value,
-    ) -> Value {
+    fn merge_args(&self, alias_args: Option<&Value>, args: &Value) -> Value {
         let mut merged = Value::Object(Default::default());
-        if let Some(preset) = preset {
-            merged = merge_deep(&merged, preset);
-        }
         if let Some(alias_args) = alias_args {
             merged = merge_deep(&merged, alias_args);
         }
@@ -178,6 +150,53 @@ impl ToolExecutor {
             map.remove("preset_name");
         }
         cleaned
+    }
+
+    fn validate_effective_args(
+        &self,
+        tool: &str,
+        args: &Value,
+        invoked_as: Option<&str>,
+    ) -> Result<(), ToolError> {
+        validate_tool_args(tool, args).map_err(|err| {
+            let mut details = serde_json::Map::new();
+            details.insert(
+                "stage".to_string(),
+                Value::String("effective_args".to_string()),
+            );
+            details.insert("tool".to_string(), Value::String(tool.to_string()));
+            if let Some(alias) = invoked_as {
+                details.insert("invoked_as".to_string(), Value::String(alias.to_string()));
+            }
+            ToolError::invalid_params(err.message).with_details(Value::Object(details))
+        })
+    }
+
+    fn reject_preset_compat(&self, args: &Value, alias: Option<&Value>) -> Result<(), ToolError> {
+        let explicit = args
+            .get("preset")
+            .or_else(|| args.get("preset_name"))
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let inherited = alias
+            .and_then(|value| value.get("preset"))
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let preset_name = explicit.or(inherited);
+        if let Some(name) = preset_name {
+            return Err(ToolError::invalid_params(
+                "preset/preset_name is compatibility-only and no longer supported in the runtime hot path",
+            )
+            .with_hint(
+                "Expand the preset into explicit arguments, or move stable defaults into project/target/profile configuration."
+                    .to_string(),
+            )
+            .with_details(serde_json::json!({
+                "stage": "compatibility_preset",
+                "preset": name,
+            })));
+        }
+        Ok(())
     }
 
     fn build_audit_args(&self, args: &Value) -> Value {
@@ -317,7 +336,6 @@ impl ToolExecutor {
             span_id,
             parent_span_id,
             invoked_as,
-            preset_name,
         } = meta;
         let output = args.get("output");
         let store = self.normalize_store_target(args.get("store_as"), args.get("store_scope"));
@@ -348,6 +366,8 @@ impl ToolExecutor {
             let _ = self.state_service.set(&key, spilled.clone(), Some(&scope));
         }
 
+        let resolved_effects =
+            tool_effects::resolve_tool_call_effects_for_result(tool, args, result);
         let meta = serde_json::json!({
             "tool": tool,
             "action": args.get("action").cloned().unwrap_or(Value::Null),
@@ -357,7 +377,7 @@ impl ToolExecutor {
             "duration_ms": chrono::Utc::now().timestamp_millis() - started_at,
             "stored_as": args.get("store_as").cloned().unwrap_or(Value::Null),
             "invoked_as": invoked_as,
-            "preset": preset_name,
+            "effects": resolved_effects.to_value(),
         });
 
         Ok(serde_json::json!({
@@ -406,29 +426,9 @@ impl ToolExecutor {
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
 
-        let mut preset_name = args
-            .get("preset")
-            .or_else(|| args.get("preset_name"))
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
-        if preset_name.is_none() {
-            if let Some(alias_value) = alias.as_ref() {
-                if let Some(alias_preset) = alias_value.get("preset").and_then(|v| v.as_str()) {
-                    preset_name = Some(alias_preset.to_string());
-                }
-            }
-        }
-
-        let preset_data = if let Some(name) = preset_name.as_ref() {
-            self.preset_service
-                .as_ref()
-                .and_then(|service| service.resolve_preset(name))
-        } else {
-            None
-        };
-        let normalized_preset = self.normalize_preset_data(preset_data);
+        self.reject_preset_compat(&args, alias.as_ref())?;
         let alias_args = self.normalize_alias_args(alias.as_ref());
-        let merged_args = self.merge_args(normalized_preset.as_ref(), alias_args.as_ref(), &args);
+        let merged_args = self.merge_args(alias_args.as_ref(), &args);
 
         let mut merged_args = merged_args;
         if let Value::Object(map) = &mut merged_args {
@@ -446,10 +446,61 @@ impl ToolExecutor {
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
 
+        self.validate_effective_args(&resolved_tool, &merged_args, invoked_as.as_deref())?;
+
         self.logger
             .debug(resolved_tool.as_str(), merged_args.get("action"));
 
-        let result = handler.unwrap().handle(cleaned_args).await?;
+        // Global effects enforcement (flagship safety): tools declare whether they are read/write/mixed
+        // and whether they need explicit `apply` (opt-in) and/or `confirm` (irreversible).
+        let effects = tool_effects::resolve_tool_call_effects(&resolved_tool, &merged_args);
+        let apply = merged_args
+            .get("apply")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let confirm = merged_args
+            .get("confirm")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        if effects.effects.requires_apply && !apply {
+            return Err(
+                ToolError::denied("Action requires apply=true for write/mixed effects")
+                    .with_hint(
+                        "Rerun with apply=true if you intend to perform write operations."
+                            .to_string(),
+                    )
+                    .with_details(serde_json::json!({ "effects": effects.to_value() })),
+            );
+        }
+        if effects.effects.irreversible && !confirm {
+            return Err(ToolError::denied(
+                "Action requires confirm=true for irreversible effects",
+            )
+            .with_hint(
+                "Rerun with confirm=true if you understand this cannot be safely auto-rolled-back."
+                    .to_string(),
+            )
+            .with_details(serde_json::json!({ "effects": effects.to_value() })));
+        }
+
+        let budget_ms = env_u64("INFRA_TOOL_CALL_TIMEOUT_MS", 55_000);
+        let result = match tokio::time::timeout(
+            std::time::Duration::from_millis(budget_ms),
+            handler.unwrap().handle(cleaned_args),
+        )
+        .await
+        {
+            Ok(result) => result?,
+            Err(_) => {
+                return Err(ToolError::timeout("Tool call timed out").with_details(
+                    serde_json::json!({
+                        "tool": resolved_tool,
+                        "action": merged_args.get("action"),
+                        "timeout_ms": budget_ms,
+                    }),
+                ));
+            }
+        };
         let payload = self
             .wrap_result(
                 &resolved_tool,
@@ -461,7 +512,6 @@ impl ToolExecutor {
                     span_id: span_id.clone(),
                     parent_span_id: parent_span_id.clone(),
                     invoked_as: invoked_as.clone(),
-                    preset_name: preset_name.clone(),
                 },
             )
             .await?;

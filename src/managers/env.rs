@@ -18,7 +18,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 const ENV_PROFILE_TYPE: &str = "env";
-const ENV_ACTIONS: &[&str] = &[
+pub(crate) const ENV_ACTIONS: &[&str] = &[
     "profile_upsert",
     "profile_get",
     "profile_list",

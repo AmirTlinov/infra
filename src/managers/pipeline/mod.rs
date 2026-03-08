@@ -19,7 +19,7 @@ use crate::utils::tool_errors::unknown_action_error;
 use serde_json::Value;
 use std::sync::Arc;
 
-const PIPELINE_ACTIONS: &[&str] = &["run", "describe", "deploy_smoke"];
+pub(crate) const PIPELINE_ACTIONS: &[&str] = &["run", "describe", "deploy_smoke"];
 
 const PIPELINE_FLOWS: &[&str] = &[
     "http_to_sftp",

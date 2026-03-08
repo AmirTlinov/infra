@@ -2411,7 +2411,8 @@
         "args": {
           "action": "check_host",
           "project": "{{ input.project_name }}",
-          "target": "{{ input.target_name }}"
+          "target": "{{ input.target_name }}",
+          "stability": "auto"
         }
       }
     ]
@@ -2429,7 +2430,8 @@
           "project": "{{ input.project_name }}",
           "target": "{{ input.target_name }}",
           "base_url": "{{ ?input.base_url }}",
-          "path": "{{ input.path }}"
+          "path": "{{ input.path }}",
+          "stability": "auto"
         }
       }
     ]
@@ -2478,7 +2480,8 @@
         "args": {
           "action": "check_host",
           "project": "{{ input.project_name }}",
-          "target": "{{ input.target_name }}"
+          "target": "{{ input.target_name }}",
+          "stability": "auto"
         }
       }
     ]
@@ -2524,6 +2527,631 @@
           ],
           "cwd": "{{ ?input.repo_path }}",
           "inline": true
+        }
+      }
+    ]
+  },
+  "preflight.bootstrap": {
+    "description": "Bootstrap preflight: workspace diagnose + docker/kubectl/ssh checks.",
+    "tags": ["preflight", "diagnostic", "read"],
+    "inputs": ["project_name", "target_name", "kubeconfig", "namespace"],
+    "steps": [
+      {
+        "id": "workspace",
+        "tool": "mcp_workspace",
+        "args": {
+          "action": "diagnose",
+          "format": "actions",
+          "include_call": true,
+          "limit": 25
+        }
+      },
+      {
+        "id": "docker_version",
+        "tool": "mcp_local",
+        "continue_on_error": true,
+        "args": {
+          "action": "exec",
+          "command": "docker",
+          "args": ["--version"],
+          "timeout_ms": 3000,
+          "inline": true
+        }
+      },
+      {
+        "id": "docker_ps",
+        "tool": "mcp_local",
+        "continue_on_error": true,
+        "args": {
+          "action": "exec",
+          "command": "docker",
+          "args": ["ps"],
+          "timeout_ms": 5000,
+          "inline": true
+        }
+      },
+      {
+        "id": "kubectl_version",
+        "tool": "mcp_local",
+        "continue_on_error": true,
+        "args": {
+          "action": "exec",
+          "command": "kubectl",
+          "args": ["version", "--short"],
+          "env": {
+            "KUBECONFIG": "{{ ?input.kubeconfig }}"
+          },
+          "timeout_ms": 5000,
+          "inline": true
+        }
+      },
+      {
+        "id": "k8s_access",
+        "tool": "mcp_local",
+        "continue_on_error": true,
+        "args": {
+          "action": "exec",
+          "command": "kubectl",
+          "args": ["get", "ns", "--request-timeout=5s"],
+          "env": {
+            "KUBECONFIG": "{{ ?input.kubeconfig }}"
+          },
+          "timeout_ms": 5000,
+          "inline": true
+        }
+      },
+      {
+        "id": "ssh_check",
+        "tool": "mcp_ssh_manager",
+        "when": {
+          "and": [
+            { "path": "input.project_name", "exists": true },
+            { "path": "input.project_name", "not_equals": "" },
+            { "path": "input.target_name", "exists": true },
+            { "path": "input.target_name", "not_equals": "" }
+          ]
+        },
+        "continue_on_error": true,
+        "args": {
+          "action": "check_host",
+          "project": "{{ input.project_name }}",
+          "target": "{{ input.target_name }}",
+          "stability": "auto"
+        }
+      }
+    ]
+  },
+  "k8s.rollback.undo": {
+    "description": "Rollback a Kubernetes workload via kubectl rollout undo.",
+    "tags": ["k8s", "rollback", "write"],
+    "inputs": ["kubeconfig", "namespace", "workload_kind", "workload_name", "revision", "wait"],
+    "steps": [
+      {
+        "id": "history_before",
+        "tool": "mcp_local",
+        "continue_on_error": true,
+        "args": {
+          "action": "exec",
+          "command": "kubectl",
+          "args": [
+            "-n",
+            "{{ input.namespace }}",
+            "rollout",
+            "history",
+            "{{ input.workload_kind }}/{{ input.workload_name }}"
+          ],
+          "env": {
+            "KUBECONFIG": "{{ ?input.kubeconfig }}"
+          },
+          "inline": true
+        }
+      },
+      {
+        "id": "undo_to_revision",
+        "tool": "mcp_local",
+        "when": {
+          "and": [
+            { "path": "input.revision", "exists": true },
+            { "path": "input.revision", "not_equals": null },
+            { "path": "input.revision", "not_equals": "" }
+          ]
+        },
+        "args": {
+          "action": "exec",
+          "command": "kubectl",
+          "args": [
+            "-n",
+            "{{ input.namespace }}",
+            "rollout",
+            "undo",
+            "{{ input.workload_kind }}/{{ input.workload_name }}",
+            "--to-revision={{ input.revision }}"
+          ],
+          "env": {
+            "KUBECONFIG": "{{ ?input.kubeconfig }}"
+          },
+          "inline": true
+        }
+      },
+      {
+        "id": "undo_latest",
+        "tool": "mcp_local",
+        "when": {
+          "or": [
+            { "path": "input.revision", "exists": false },
+            { "path": "input.revision", "equals": null },
+            { "path": "input.revision", "equals": "" }
+          ]
+        },
+        "args": {
+          "action": "exec",
+          "command": "kubectl",
+          "args": [
+            "-n",
+            "{{ input.namespace }}",
+            "rollout",
+            "undo",
+            "{{ input.workload_kind }}/{{ input.workload_name }}"
+          ],
+          "env": {
+            "KUBECONFIG": "{{ ?input.kubeconfig }}"
+          },
+          "inline": true
+        }
+      },
+      {
+        "id": "history_after",
+        "tool": "mcp_local",
+        "continue_on_error": true,
+        "args": {
+          "action": "exec",
+          "command": "kubectl",
+          "args": [
+            "-n",
+            "{{ input.namespace }}",
+            "rollout",
+            "history",
+            "{{ input.workload_kind }}/{{ input.workload_name }}"
+          ],
+          "env": {
+            "KUBECONFIG": "{{ ?input.kubeconfig }}"
+          },
+          "inline": true
+        }
+      },
+      {
+        "id": "status",
+        "tool": "mcp_local",
+        "when": { "path": "input.wait", "equals": true },
+        "continue_on_error": true,
+        "args": {
+          "action": "exec",
+          "command": "kubectl",
+          "args": [
+            "-n",
+            "{{ input.namespace }}",
+            "rollout",
+            "status",
+            "{{ input.workload_kind }}/{{ input.workload_name }}",
+            "--timeout=60s"
+          ],
+          "env": {
+            "KUBECONFIG": "{{ ?input.kubeconfig }}"
+          },
+          "inline": true
+        }
+      }
+    ]
+  },
+  "db.migrate.postgres": {
+    "description": "Postgres migration runner: execute a transactional batch of SQL statements.",
+    "tags": ["db", "postgres", "migration", "write", "irreversible"],
+    "inputs": ["profile_name", "connection_url", "statements"],
+    "steps": [
+      {
+        "id": "precheck_profile",
+        "tool": "mcp_psql_manager",
+        "when": {
+          "and": [
+            { "path": "input.profile_name", "exists": true },
+            { "path": "input.profile_name", "not_equals": null },
+            { "path": "input.profile_name", "not_equals": "" }
+          ]
+        },
+        "args": {
+          "action": "query",
+          "profile_name": "{{ input.profile_name }}",
+          "sql": "SELECT 1"
+        }
+      },
+      {
+        "id": "precheck_url",
+        "tool": "mcp_psql_manager",
+        "when": {
+          "and": [
+            { "path": "input.connection_url", "exists": true },
+            { "path": "input.connection_url", "not_equals": null },
+            { "path": "input.connection_url", "not_equals": "" },
+            {
+              "or": [
+                { "path": "input.profile_name", "exists": false },
+                { "path": "input.profile_name", "equals": null },
+                { "path": "input.profile_name", "equals": "" }
+              ]
+            }
+          ]
+        },
+        "args": {
+          "action": "query",
+          "connection_url": "{{ input.connection_url }}",
+          "sql": "SELECT 1"
+        }
+      },
+      {
+        "id": "migrate_profile",
+        "tool": "mcp_psql_manager",
+        "when": {
+          "and": [
+            { "path": "input.profile_name", "exists": true },
+            { "path": "input.profile_name", "not_equals": null },
+            { "path": "input.profile_name", "not_equals": "" }
+          ]
+        },
+        "args": {
+          "action": "transaction",
+          "profile_name": "{{ input.profile_name }}",
+          "statements": "{{ input.statements }}"
+        }
+      },
+      {
+        "id": "migrate_url",
+        "tool": "mcp_psql_manager",
+        "when": {
+          "and": [
+            { "path": "input.connection_url", "exists": true },
+            { "path": "input.connection_url", "not_equals": null },
+            { "path": "input.connection_url", "not_equals": "" },
+            {
+              "or": [
+                { "path": "input.profile_name", "exists": false },
+                { "path": "input.profile_name", "equals": null },
+                { "path": "input.profile_name", "equals": "" }
+              ]
+            }
+          ]
+        },
+        "args": {
+          "action": "transaction",
+          "connection_url": "{{ input.connection_url }}",
+          "statements": "{{ input.statements }}"
+        }
+      }
+    ]
+  },
+  "incident.k8s.triage": {
+    "description": "Incident triage for Kubernetes workloads: events, pods, describe, logs.",
+    "tags": ["incident", "k8s", "diagnostic", "read"],
+    "inputs": ["kubeconfig", "namespace", "selector", "workload_kind", "workload_name", "logs", "tail_lines"],
+    "steps": [
+      {
+        "id": "kubectl_version",
+        "tool": "mcp_local",
+        "continue_on_error": true,
+        "args": {
+          "action": "exec",
+          "command": "kubectl",
+          "args": ["version", "--short"],
+          "env": {
+            "KUBECONFIG": "{{ ?input.kubeconfig }}"
+          },
+          "inline": true
+        }
+      },
+      {
+        "id": "cluster_info",
+        "tool": "mcp_local",
+        "continue_on_error": true,
+        "args": {
+          "action": "exec",
+          "command": "kubectl",
+          "args": ["cluster-info"],
+          "env": {
+            "KUBECONFIG": "{{ ?input.kubeconfig }}"
+          },
+          "inline": true
+        }
+      },
+      {
+        "id": "nodes",
+        "tool": "mcp_local",
+        "continue_on_error": true,
+        "args": {
+          "action": "exec",
+          "command": "kubectl",
+          "args": ["get", "nodes", "-o", "wide"],
+          "env": {
+            "KUBECONFIG": "{{ ?input.kubeconfig }}"
+          },
+          "inline": true
+        }
+      },
+      {
+        "id": "events",
+        "tool": "mcp_local",
+        "continue_on_error": true,
+        "args": {
+          "action": "exec",
+          "command": "kubectl",
+          "args": [
+            "-n",
+            "{{ input.namespace }}",
+            "get",
+            "events",
+            "--sort-by=.metadata.creationTimestamp"
+          ],
+          "env": {
+            "KUBECONFIG": "{{ ?input.kubeconfig }}"
+          },
+          "inline": true
+        }
+      },
+      {
+        "id": "pods",
+        "tool": "mcp_local",
+        "continue_on_error": true,
+        "args": {
+          "action": "exec",
+          "command": "kubectl",
+          "args": [
+            "-n",
+            "{{ input.namespace }}",
+            "get",
+            "pods",
+            "-l",
+            "{{ input.selector }}",
+            "-o",
+            "wide"
+          ],
+          "env": {
+            "KUBECONFIG": "{{ ?input.kubeconfig }}"
+          },
+          "inline": true
+        }
+      },
+      {
+        "id": "describe_workload",
+        "tool": "mcp_local",
+        "continue_on_error": true,
+        "args": {
+          "action": "exec",
+          "command": "kubectl",
+          "args": [
+            "-n",
+            "{{ input.namespace }}",
+            "describe",
+            "{{ input.workload_kind }}",
+            "{{ input.workload_name }}"
+          ],
+          "env": {
+            "KUBECONFIG": "{{ ?input.kubeconfig }}"
+          },
+          "inline": true
+        }
+      },
+      {
+        "id": "pod_name",
+        "tool": "mcp_local",
+        "continue_on_error": true,
+        "args": {
+          "action": "exec",
+          "command": "kubectl",
+          "args": [
+            "-n",
+            "{{ input.namespace }}",
+            "get",
+            "pods",
+            "-l",
+            "{{ input.selector }}",
+            "-o",
+            "jsonpath={.items[0].metadata.name}"
+          ],
+          "env": {
+            "KUBECONFIG": "{{ ?input.kubeconfig }}"
+          },
+          "inline": true
+        }
+      },
+      {
+        "id": "describe_pod",
+        "tool": "mcp_local",
+        "when": {
+          "and": [
+            { "path": "steps.pod_name.stdout", "exists": true },
+            { "path": "steps.pod_name.stdout", "not_equals": "" }
+          ]
+        },
+        "continue_on_error": true,
+        "args": {
+          "action": "exec",
+          "command": "kubectl",
+          "args": [
+            "-n",
+            "{{ input.namespace }}",
+            "describe",
+            "pod",
+            "{{ steps.pod_name.stdout }}"
+          ],
+          "env": {
+            "KUBECONFIG": "{{ ?input.kubeconfig }}"
+          },
+          "inline": true
+        }
+      },
+      {
+        "id": "logs",
+        "tool": "mcp_local",
+        "when": {
+          "and": [
+            { "path": "input.logs", "equals": true },
+            { "path": "steps.pod_name.stdout", "exists": true },
+            { "path": "steps.pod_name.stdout", "not_equals": "" }
+          ]
+        },
+        "continue_on_error": true,
+        "args": {
+          "action": "exec",
+          "command": "kubectl",
+          "args": [
+            "-n",
+            "{{ input.namespace }}",
+            "logs",
+            "{{ steps.pod_name.stdout }}",
+            "--tail",
+            "{{ input.tail_lines }}"
+          ],
+          "env": {
+            "KUBECONFIG": "{{ ?input.kubeconfig }}"
+          },
+          "inline": true
+        }
+      }
+    ]
+  },
+  "repo.triage": {
+    "description": "Repo triage: status + last commit + diff snapshot.",
+    "tags": ["repo", "diagnostic", "read"],
+    "inputs": ["repo_root"],
+    "steps": [
+      {
+        "id": "repo",
+        "tool": "mcp_repo",
+        "args": {
+          "action": "repo_info",
+          "repo_root": "{{ input.repo_root }}"
+        }
+      },
+      {
+        "id": "status",
+        "tool": "mcp_repo",
+        "continue_on_error": true,
+        "args": {
+          "action": "exec",
+          "repo_root": "{{ input.repo_root }}",
+          "command": "git",
+          "args": ["status", "--porcelain=v1", "--branch"],
+          "timeout_ms": 30000,
+          "inline": true
+        }
+      },
+      {
+        "id": "last_commit",
+        "tool": "mcp_repo",
+        "continue_on_error": true,
+        "args": {
+          "action": "exec",
+          "repo_root": "{{ input.repo_root }}",
+          "command": "git",
+          "args": ["log", "-1", "--oneline"],
+          "timeout_ms": 30000,
+          "inline": true
+        }
+      },
+      {
+        "id": "diff",
+        "tool": "mcp_repo",
+        "continue_on_error": true,
+        "args": {
+          "action": "git_diff",
+          "repo_root": "{{ input.repo_root }}"
+        }
+      }
+    ]
+  },
+  "smoke.target.baseline": {
+    "description": "End-to-end smoke for a target: SSH connectivity + DB ping + HTTP health.",
+    "tags": ["smoke", "e2e", "read"],
+    "inputs": ["project", "target", "api_url", "sql"],
+    "steps": [
+      {
+        "id": "ssh_check",
+        "tool": "mcp_ssh_manager",
+        "args": {
+          "action": "check_host",
+          "project": "{{ input.project }}",
+          "target": "{{ input.target }}",
+          "stability": "auto"
+        }
+      },
+      {
+        "id": "ssh_system",
+        "tool": "mcp_ssh_manager",
+        "continue_on_error": true,
+        "args": {
+          "action": "system_info",
+          "project": "{{ input.project }}",
+          "target": "{{ input.target }}"
+        }
+      },
+      {
+        "id": "db_ping",
+        "tool": "mcp_psql_manager",
+        "continue_on_error": true,
+        "args": {
+          "action": "query",
+          "project": "{{ input.project }}",
+          "target": "{{ input.target }}",
+          "sql": "{{ input.sql }}"
+        }
+      },
+      {
+        "id": "api_health",
+        "tool": "mcp_api_client",
+        "continue_on_error": true,
+        "args": {
+          "action": "request",
+          "project": "{{ input.project }}",
+          "target": "{{ input.target }}",
+          "method": "GET",
+          "url": "{{ input.api_url }}",
+          "expect_code": 200,
+          "follow_redirects": true,
+          "stability": "auto"
+        }
+      }
+    ]
+  },
+  "smoke.http.endpoint": {
+    "description": "HTTP smoke: fetch URL and assert expected status code.",
+    "tags": ["smoke", "http", "read"],
+    "inputs": ["url", "expect_code"],
+    "steps": [
+      {
+        "id": "http",
+        "tool": "mcp_api_client",
+        "args": {
+          "action": "smoke_http",
+          "url": "{{ input.url }}",
+          "expect_code": "{{ input.expect_code }}",
+          "follow_redirects": true,
+          "insecure_ok": true,
+          "stability": "auto"
+        }
+      }
+    ]
+  },
+  "smoke.manifests.images_plain": {
+    "description": "Smoke manifests: plain render of YAMLs + image inventory + policy violations.",
+    "tags": ["smoke", "gitops", "repo", "read"],
+    "inputs": ["repo_root", "path"],
+    "steps": [
+      {
+        "id": "render",
+        "tool": "mcp_repo",
+        "args": {
+          "action": "render",
+          "repo_root": "{{ input.repo_root }}",
+          "render_type": "plain",
+          "overlay": "{{ input.path }}"
         }
       }
     ]

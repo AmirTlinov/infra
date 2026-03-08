@@ -63,6 +63,7 @@ pub fn resolve_store_info() -> serde_json::Value {
         "base_dir": resolve_profile_base_dir(),
         "entry_dir": resolve_entry_dir(),
         "mode": resolve_store_mode(),
+        "store_db": resolve_store_db_path(),
     })
 }
 
@@ -189,6 +190,13 @@ pub fn resolve_cache_dir() -> PathBuf {
         return path;
     }
     resolve_profile_base_dir().join("cache")
+}
+
+pub fn resolve_store_db_path() -> PathBuf {
+    if let Some(path) = normalize_env_path(env::var("MCP_STORE_DB_PATH").ok()) {
+        return path;
+    }
+    resolve_profile_base_dir().join("infra.db")
 }
 
 pub fn resolve_context_repo_root() -> Option<PathBuf> {

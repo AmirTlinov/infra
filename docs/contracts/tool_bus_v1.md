@@ -24,9 +24,13 @@ Infra speaks [MCP_JSONRPC] via stdio:
 Core methods:
 
 - `initialize` → returns `protocolVersion`, `capabilities.tools.list/call`, and `serverInfo`.
-- `tools/list` → returns `{"tools":[{name,description,inputSchema}, ...]}`.
+- `tools/list` → returns `{"tools":[{name,description,inputSchema}, ...]}` for canonical MCP tools only. By default Infra publishes the low-entropy core tier; `INFRA_TOOL_TIER=expert` expands discovery to the wider canonical surface.
 - `tools/call` → returns MCP `content`:
-  - `{"content":[{"type":"text","text":"<ENVELOPE as JSON string>"}]}`
+  - `{"structuredContent": <ENVELOPE>, "content":[{"type":"text","text":"<ENVELOPE as JSON string>"}]}`
+- `resources/list` → returns `{"resources":[{uri,name,description,mimeType}, ...]}` for read-only context surfaces.
+- `resources/read` → returns `{"contents":[{uri,mimeType,text}, ...]}`.
+- `prompts/list` → returns `{"prompts":[{name,description,arguments}, ...]}`.
+- `prompts/get` → returns prompt messages for capability-first workflows.
 
 The returned [ENVELOPE] is stable and machine-parsable. It includes:
 
@@ -34,6 +38,7 @@ The returned [ENVELOPE] is stable and machine-parsable. It includes:
 - `tool`: string (DX-friendly name, may be an alias like `ssh`)
 - `action`: string|null
 - `result`: any JSON (redacted/bounded)
+- `stability`: optional object for transient-resilience telemetry (`retried`, `attempts`, `classification`, optional `next_retry_after_ms`, optional `debug_ref`)
 - `duration_ms`: number|null
 - `trace`: correlation ids (`trace_id`, `span_id`, `parent_span_id`)
 - `artifact_uri_context`: artifact URI for the human `.context` doc (or null)
@@ -44,6 +49,7 @@ Errors are typed and fail-closed:
 
 - JSON-RPC layer: `InvalidRequest`, `MethodNotFound`, `InvalidParams`, `InternalError`.
 - Tool layer: `ToolError` carries `kind`, `code`, `retryable`, `message`, and optional `hint`.
+- For transient channel failures, tools MAY expose `stability.classification` values such as `transient` or `circuit_open` and remain compact by default.
 
 ## Examples
 ```json

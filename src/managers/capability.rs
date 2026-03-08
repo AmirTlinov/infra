@@ -5,12 +5,11 @@ use crate::services::logger::Logger;
 use crate::services::validation::Validation;
 use crate::utils::listing::ListFilters;
 use crate::utils::tool_errors::unknown_action_error;
-use crate::utils::when_matcher::matches_when;
 use serde_json::Value;
 use std::sync::Arc;
 
-const CAPABILITY_ACTIONS: &[&str] = &[
-    "list", "get", "set", "delete", "resolve", "suggest", "graph", "stats",
+pub(crate) const CAPABILITY_ACTIONS: &[&str] = &[
+    "list", "get", "set", "delete", "resolve", "families", "suggest", "graph", "stats",
 ];
 
 #[derive(Clone)]
@@ -52,6 +51,7 @@ impl CapabilityManager {
                     "success": true,
                     "capabilities": result.items,
                     "meta": filters.meta(result.total, result.items.len()),
+                    "manifest": self.capability_service.manifest_metadata(),
                 }))
             }
             "get" => {
@@ -61,7 +61,11 @@ impl CapabilityManager {
                     true,
                 )?;
                 let capability = self.capability_service.get_capability(&name)?;
-                Ok(serde_json::json!({"success": true, "capability": capability}))
+                Ok(serde_json::json!({
+                    "success": true,
+                    "capability": capability,
+                    "manifest": self.capability_service.manifest_metadata(),
+                }))
             }
             "set" => {
                 let name = self.validation.ensure_string(
@@ -90,12 +94,6 @@ impl CapabilityManager {
                     "Intent type",
                     true,
                 )?;
-                let candidates = self.capability_service.find_all_by_intent(&intent)?;
-                if candidates.is_empty() {
-                    return Err(ToolError::not_found(format!("Capability for intent '{}' not found", intent))
-                        .with_hint("Create a capability for this intent, or run capability_list to see available ones.".to_string())
-                        .with_details(serde_json::json!({"intent_type": intent})));
-                }
                 let context_result = if let Some(service) = &self.context_service {
                     service.get_context(&args).await.ok()
                 } else {
@@ -106,39 +104,21 @@ impl CapabilityManager {
                     .and_then(|v| v.get("context"))
                     .cloned()
                     .unwrap_or(Value::Object(Default::default()));
-                let mut matched = Vec::new();
-                for candidate in candidates {
-                    if matches_when(candidate.get("when").unwrap_or(&Value::Null), &context) {
-                        matched.push(candidate);
-                    }
-                }
-                if matched.is_empty() {
-                    return Err(ToolError::not_found(format!(
-                        "No capability matched when clause for intent '{}'",
-                        intent
-                    ))
-                    .with_hint(
-                        "Adjust capability.when or provide more context for matching.".to_string(),
-                    )
-                    .with_details(serde_json::json!({"intent_type": intent})));
-                }
-                matched.sort_by(|a, b| {
-                    let a_direct = a.get("name").and_then(|v| v.as_str()) == Some(intent.as_str());
-                    let b_direct = b.get("name").and_then(|v| v.as_str()) == Some(intent.as_str());
-                    match (a_direct, b_direct) {
-                        (true, false) => std::cmp::Ordering::Less,
-                        (false, true) => std::cmp::Ordering::Greater,
-                        _ => a
-                            .get("name")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("")
-                            .cmp(b.get("name").and_then(|v| v.as_str()).unwrap_or("")),
-                    }
-                });
-                Ok(
-                    serde_json::json!({"success": true, "capability": matched[0].clone(), "context": context_result.and_then(|v| v.get("context").cloned())}),
-                )
+                let capability = self
+                    .capability_service
+                    .resolve_by_intent(&intent, Some(&context))?;
+                Ok(serde_json::json!({
+                    "success": true,
+                    "capability": capability,
+                    "context": context_result.and_then(|v| v.get("context").cloned()),
+                    "manifest": self.capability_service.manifest_metadata(),
+                }))
             }
+            "families" => Ok(serde_json::json!({
+                "success": true,
+                "families": self.capability_service.families_index()?,
+                "manifest": self.capability_service.manifest_metadata(),
+            })),
             "suggest" => Ok(serde_json::json!({"success": true, "suggestions": []})),
             "graph" => Ok(serde_json::json!({"success": true, "graph": []})),
             "stats" => Ok(serde_json::json!({"success": true, "stats": {}})),

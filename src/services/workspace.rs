@@ -15,9 +15,9 @@ use crate::utils::fs_atomic::path_exists;
 use crate::utils::listing::ListFilters;
 use crate::utils::paths::{
     resolve_aliases_path, resolve_audit_path, resolve_cache_dir, resolve_capabilities_path,
-    resolve_context_path, resolve_evidence_dir, resolve_presets_path, resolve_profile_key_path,
-    resolve_profiles_path, resolve_projects_path, resolve_runbooks_path, resolve_state_path,
-    resolve_store_info,
+    resolve_context_path, resolve_evidence_dir, resolve_jobs_path, resolve_presets_path,
+    resolve_profile_key_path, resolve_profiles_path, resolve_projects_path, resolve_runbooks_path,
+    resolve_state_path, resolve_store_db_path, resolve_store_info,
 };
 use crate::utils::when_matcher::{match_tags, matches_when};
 use serde_json::Value;
@@ -94,11 +94,13 @@ impl WorkspaceService {
 
     fn build_store_items(&self) -> Vec<StoreItem> {
         vec![
+            StoreItem::file("store_db", resolve_store_db_path(), true),
             StoreItem::file("profiles", resolve_profiles_path(), true),
             StoreItem::file("projects", resolve_projects_path(), true),
             StoreItem::file("runbooks", resolve_runbooks_path(), false),
             StoreItem::file("capabilities", resolve_capabilities_path(), false),
             StoreItem::file("context", resolve_context_path(), true),
+            StoreItem::file("jobs", resolve_jobs_path(), true),
             StoreItem::file("aliases", resolve_aliases_path(), true),
             StoreItem::file("presets", resolve_presets_path(), true),
             StoreItem::file("audit", resolve_audit_path(), true),
@@ -127,6 +129,10 @@ impl WorkspaceService {
             "base_dir": store_info.get("base_dir").cloned().unwrap_or(Value::Null),
             "entry_dir": store_info.get("entry_dir").cloned().unwrap_or(Value::Null),
             "mode": store_info.get("mode").cloned().unwrap_or(Value::Null),
+            "primary_store": serde_json::json!({
+                "kind": "sqlite",
+                "path": resolve_store_db_path(),
+            }),
             "files": Value::Object(files),
         }))
     }
@@ -317,6 +323,10 @@ impl WorkspaceService {
                     "tags".to_string(),
                     runbook.get("tags").cloned().unwrap_or(Value::Array(vec![])),
                 );
+                item.insert(
+                    "effects".to_string(),
+                    runbook.get("effects").cloned().unwrap_or(Value::Null),
+                );
                 if let Some(inputs) = runbook.get("inputs") {
                     if !inputs.is_null() {
                         item.insert("inputs".to_string(), inputs.clone());
@@ -423,6 +433,11 @@ impl WorkspaceService {
                 .and_then(|v| v.get("requires_apply"))
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false);
+            let irreversible = cap
+                .get("effects")
+                .and_then(|v| v.get("irreversible"))
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
             let mut call_args = serde_json::Map::new();
             call_args.insert("action".to_string(), Value::String("run".to_string()));
             call_args.insert(
@@ -432,6 +447,9 @@ impl WorkspaceService {
             call_args.insert("inputs".to_string(), Value::Object(template.clone()));
             if requires_apply {
                 call_args.insert("apply".to_string(), Value::Bool(true));
+            }
+            if irreversible {
+                call_args.insert("confirm".to_string(), Value::Bool(true));
             }
             let call = if include_call {
                 Some(serde_json::json!({
@@ -460,14 +478,33 @@ impl WorkspaceService {
             });
             let resolved = resolve_inputs(&inputs_meta);
             let template = build_input_template(&resolved.required, &resolved.resolved);
+            let requires_apply = runbook
+                .get("effects")
+                .and_then(|v| v.get("requires_apply"))
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            let irreversible = runbook
+                .get("effects")
+                .and_then(|v| v.get("irreversible"))
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
             let call = if include_call {
+                let mut call_args = serde_json::Map::new();
+                call_args.insert("action".to_string(), Value::String("run".to_string()));
+                call_args.insert(
+                    "name".to_string(),
+                    runbook.get("name").cloned().unwrap_or(Value::Null),
+                );
+                call_args.insert("input".to_string(), Value::Object(template.clone()));
+                if requires_apply {
+                    call_args.insert("apply".to_string(), Value::Bool(true));
+                }
+                if irreversible {
+                    call_args.insert("confirm".to_string(), Value::Bool(true));
+                }
                 Some(serde_json::json!({
                     "tool": "mcp_workspace",
-                    "args": {
-                        "action": "run",
-                        "name": runbook.get("name").cloned().unwrap_or(Value::Null),
-                        "input": Value::Object(template.clone()),
-                    }
+                    "args": Value::Object(call_args),
                 }))
             } else {
                 None
@@ -485,6 +522,10 @@ impl WorkspaceService {
             item.insert(
                 "tags".to_string(),
                 runbook.get("tags").cloned().unwrap_or(Value::Array(vec![])),
+            );
+            item.insert(
+                "effects".to_string(),
+                runbook.get("effects").cloned().unwrap_or(Value::Null),
             );
             item.insert(
                 "inputs".to_string(),

@@ -1,0 +1,182 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import subprocess
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+
+SERVER_CONST_RE = re.compile(
+    r'const\s+(PROTOCOL_VERSION|SERVER_VERSION):\s*&str\s*=\s*"([^"]+)"'
+)
+SERVER_ENV_CONST_RE = re.compile(
+    r'const\s+(PROTOCOL_VERSION|SERVER_VERSION):\s*&str\s*=\s*env!\("([^"]+)"\)'
+)
+
+
+def _repo_root() -> Path:
+    return Path(__file__).resolve().parents[1]
+
+
+def _read_json(path: Path) -> object:
+    if not path.exists():
+        return {}
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _git_status(root: Path) -> list[str]:
+    try:
+        proc = subprocess.run(
+            ["git", "status", "--short"],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except FileNotFoundError:
+        return []
+    if proc.returncode != 0:
+        return []
+    return [line for line in proc.stdout.splitlines() if line.strip()]
+
+
+def _server_constants(server_rs: Path) -> dict[str, str]:
+    values: dict[str, str] = {}
+    text = server_rs.read_text(encoding="utf-8")
+    for match in SERVER_CONST_RE.finditer(text):
+        values[match.group(1)] = match.group(2)
+    for match in SERVER_ENV_CONST_RE.finditer(text):
+        values[match.group(1)] = f"env:{match.group(2)}"
+    return values
+
+
+def _cargo_package_version(cargo_toml: Path) -> str | None:
+    text = cargo_toml.read_text(encoding="utf-8")
+    match = re.search(r'^\s*version\s*=\s*"([^"]+)"', text, re.MULTILINE)
+    return match.group(1) if match else None
+
+
+def _tool_inventory(tool_catalog: list[dict[str, object]]) -> dict[str, object]:
+    names = [tool.get("name") for tool in tool_catalog if isinstance(tool.get("name"), str)]
+    alias_names = [name for name in names if isinstance(name, str) and not name.startswith("mcp_") and name not in {"help", "legend"}]
+    canonical = [
+        name
+        for name in names
+        if isinstance(name, str)
+        and (name.startswith("mcp_") or name in {"help", "legend"})
+    ]
+    return {
+        "total": len(names),
+        "canonical_total": len(canonical),
+        "compat_alias_total": len(alias_names),
+        "canonical_names": canonical,
+        "compat_alias_names": alias_names,
+    }
+
+
+def _capabilities_inventory(path: Path) -> dict[str, object]:
+    parsed = _read_json(path)
+    raw = parsed.get("capabilities", parsed) if isinstance(parsed, dict) else parsed
+    if isinstance(raw, dict):
+        names = sorted(raw.keys())
+        return {"path": str(path), "total": len(names), "names": names}
+    if isinstance(raw, list):
+        names = sorted(
+            entry.get("name")
+            for entry in raw
+            if isinstance(entry, dict) and isinstance(entry.get("name"), str)
+        )
+        return {"path": str(path), "total": len(names), "names": names}
+    return {"path": str(path), "total": 0, "names": []}
+
+
+def _runbooks_inventory(path: Path) -> dict[str, object]:
+    parsed = _read_json(path)
+    if not isinstance(parsed, dict):
+        return {"path": str(path), "total": 0, "total_steps": 0, "names": []}
+    names = sorted(parsed.keys())
+    total_steps = 0
+    for runbook in parsed.values():
+        if isinstance(runbook, dict) and isinstance(runbook.get("steps"), list):
+            total_steps += len(runbook["steps"])
+    return {
+        "path": str(path),
+        "total": len(names),
+        "total_steps": total_steps,
+        "names": names,
+    }
+
+
+def build_baseline(root: Path) -> dict[str, object]:
+    tool_catalog = _read_json(root / "tool_catalog.json")
+    tool_catalog = tool_catalog if isinstance(tool_catalog, list) else []
+    server_consts = _server_constants(root / "src" / "mcp" / "server.rs")
+    git_status = _git_status(root)
+
+    cargo_version = _cargo_package_version(root / "Cargo.toml")
+    server_version = server_consts.get("SERVER_VERSION")
+    if server_version == "env:CARGO_PKG_VERSION":
+        server_version = cargo_version
+
+    return {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "repo_root": str(root),
+        "git": {
+            "dirty": bool(git_status),
+            "status_short": git_status,
+            "dirty_count": len(git_status),
+        },
+        "versions": {
+            "cargo_package": cargo_version,
+            "server_protocol": server_consts.get("PROTOCOL_VERSION"),
+            "server_version": server_version,
+        },
+        "tool_inventory": _tool_inventory(tool_catalog),
+        "capabilities": _capabilities_inventory(root / "capabilities.json"),
+        "runbooks": _runbooks_inventory(root / "runbooks.json"),
+        "gate_surface": {
+            "doctor": str(root / "tools" / "doctor"),
+            "gate_full": str(root / "tools" / "gate"),
+            "gate_docs": str(root / "tools" / "gate-docs"),
+            "gate_code": str(root / "tools" / "gate-code"),
+        },
+        "legacy_import_only_json_sources": [
+            "profiles.json",
+            "state.json",
+            "projects.json",
+            "aliases.json",
+            "presets.json",
+            "jobs.json",
+        ],
+        "file_backed_manifest_sources": [
+            "runbooks.json",
+            "capabilities.json",
+        ],
+    }
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(prog="baseline")
+    parser.add_argument("--out", help="Write baseline JSON to this file instead of stdout.")
+    args = parser.parse_args()
+
+    root = _repo_root()
+    payload = build_baseline(root)
+    rendered = json.dumps(payload, indent=2, ensure_ascii=False) + "\n"
+
+    if args.out:
+        out_path = Path(args.out)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(rendered, encoding="utf-8")
+        print(out_path)
+    else:
+        sys.stdout.write(rendered)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

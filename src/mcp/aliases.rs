@@ -18,6 +18,7 @@ pub const BUILTIN_TOOL_ALIASES: &[(&str, &str)] = &[
     ("vault", "mcp_vault"),
     ("runbook", "mcp_runbook"),
     ("capability", "mcp_capability"),
+    ("operation", "mcp_operation"),
     ("intent", "mcp_intent"),
     ("evidence", "mcp_evidence"),
     ("alias", "mcp_alias"),

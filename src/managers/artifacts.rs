@@ -9,7 +9,7 @@ use serde_json::Value;
 use std::io::Seek;
 use std::path::PathBuf;
 
-const ARTIFACT_ACTIONS: &[&str] = &["get", "head", "tail", "list"];
+pub(crate) const ARTIFACT_ACTIONS: &[&str] = &["get", "head", "tail", "list"];
 
 fn allow_secret_export() -> bool {
     is_allow_secret_export_enabled()

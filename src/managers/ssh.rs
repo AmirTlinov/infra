@@ -13,6 +13,11 @@ use crate::utils::artifacts::{
 use crate::utils::feature_flags::is_allow_secret_export_enabled;
 use crate::utils::fs_atomic::{ensure_dir_for_file, temp_sibling_path};
 use crate::utils::redact::redact_text;
+use crate::utils::stability::{
+    apply_stability_source, classify_message, classify_tool_error, compute_backoff_delay_ms,
+    should_emit_stability, StabilityClassification, StabilityDefaults, StabilityMeta,
+    StabilityMode, StabilityPolicy, StabilityPreset,
+};
 use crate::utils::stdin::{resolve_stdin_source, StdinSource};
 use crate::utils::tool_errors::unknown_action_error;
 use crate::utils::user_paths::expand_home_path;
@@ -21,18 +26,19 @@ use regex::Regex;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use ssh2::{FileStat, OpenFlags, OpenType, Session};
+use std::collections::HashMap;
 use std::fs;
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 const SSH_PROFILE_TYPE: &str = "ssh";
 const DEFAULT_MAX_CAPTURE_BYTES: usize = 256 * 1024;
 const DEFAULT_MAX_INLINE_BYTES: usize = 16 * 1024;
 
-const SSH_ACTIONS: &[&str] = &[
+pub(crate) const SSH_ACTIONS: &[&str] = &[
     "profile_upsert",
     "profile_get",
     "profile_list",
@@ -98,6 +104,7 @@ pub struct SshManager {
     job_service: Option<Arc<JobService>>,
     jobs: Arc<dashmap::DashMap<String, Value>>,
     max_jobs: usize,
+    circuits: Arc<Mutex<HashMap<String, Instant>>>,
 }
 
 impl SshManager {
@@ -124,6 +131,7 @@ impl SshManager {
             job_service,
             jobs: Arc::new(dashmap::DashMap::new()),
             max_jobs,
+            circuits: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -187,6 +195,9 @@ impl SshManager {
             obj.remove("password");
             obj.remove("private_key");
             obj.remove("passphrase");
+            if let Some(stability) = args.get("stability") {
+                obj.insert("stability".to_string(), stability.clone());
+            }
         }
 
         self.profile_test(&serde_json::json!({"connection": connection}))
@@ -260,12 +271,84 @@ impl SshManager {
     }
 
     async fn profile_test(&self, args: &Value) -> Result<Value, ToolError> {
-        let resolved = self.resolve_connection(args).await?;
-        let connection = resolved.connection.clone();
-        tokio::task::spawn_blocking(move || test_connection(&connection))
-            .await
-            .map_err(|_| ToolError::internal("SSH profile test task failed"))??;
-        Ok(serde_json::json!({"success": true}))
+        let policy = self.resolve_stability_policy(args).await?;
+        let debug_requested = stability_debug_requested(args);
+        let circuit_key = self.build_stability_key(args, "profile_test").await;
+        if policy.enabled && policy.circuit_open_ms > 0 {
+            if let Some(remaining_ms) = self.circuit_remaining_ms(&circuit_key) {
+                return Err(self.circuit_open_error("SSH profile test", remaining_ms));
+            }
+        }
+
+        let max_attempts = if policy.enabled {
+            policy.max_attempts.max(1)
+        } else {
+            1
+        };
+        let mut attempt = 0;
+        while attempt < max_attempts {
+            attempt += 1;
+            let resolved = self.resolve_connection(args).await?;
+            let connection = resolved.connection.clone();
+            let outcome = tokio::task::spawn_blocking(move || test_connection(&connection))
+                .await
+                .map_err(|_| ToolError::internal("SSH profile test task failed"))?;
+
+            match outcome {
+                Ok(()) => {
+                    self.close_circuit(&circuit_key);
+                    let mut result = serde_json::json!({
+                        "success": true,
+                        "attempts": attempt,
+                        "retries": attempt.saturating_sub(1),
+                    });
+                    let stability = StabilityMeta {
+                        retried: attempt > 1,
+                        attempts: attempt,
+                        classification: StabilityClassification::None,
+                        next_retry_after_ms: None,
+                        debug_ref: None,
+                    };
+                    if should_emit_stability(&stability, debug_requested) {
+                        if let Some(map) = result.as_object_mut() {
+                            map.insert("stability".to_string(), stability.to_value());
+                        }
+                    }
+                    return Ok(result);
+                }
+                Err(err) => {
+                    let classification = self.classify_ssh_error(&err);
+                    if !policy.enabled
+                        || classification != StabilityClassification::Transient
+                        || attempt >= max_attempts
+                    {
+                        if classification == StabilityClassification::Transient
+                            && policy.circuit_open_ms > 0
+                        {
+                            self.open_circuit(&circuit_key, policy.circuit_open_ms);
+                        }
+                        return Err(self.decorate_retry_error(
+                            err,
+                            "SSH profile test",
+                            attempt,
+                            max_attempts,
+                            classification,
+                        ));
+                    }
+                    let delay = compute_backoff_delay_ms(
+                        attempt,
+                        policy.base_delay_ms,
+                        policy.max_delay_ms,
+                        policy.jitter,
+                    );
+                    tokio::time::sleep(Duration::from_millis(delay)).await;
+                }
+            }
+        }
+
+        Err(ToolError::retryable(
+            "SSH profile test failed after retries",
+        ))
     }
 
     async fn exec_command(&self, args: &Value) -> Result<Value, ToolError> {
@@ -295,8 +378,92 @@ impl SshManager {
             budget_ms,
         );
 
-        self.exec_command_once(args, command, timeout_ms, requested_timeout)
+        self.exec_command_with_stability(args, command, timeout_ms, requested_timeout)
             .await
+    }
+
+    async fn exec_command_with_stability(
+        &self,
+        args: &Value,
+        command: String,
+        timeout_ms: u64,
+        requested_timeout: Option<u64>,
+    ) -> Result<Value, ToolError> {
+        let policy = self.resolve_stability_policy(args).await?;
+        let debug_requested = stability_debug_requested(args);
+        let circuit_key = self.build_stability_key(args, "exec").await;
+        if policy.enabled && policy.circuit_open_ms > 0 {
+            if let Some(remaining_ms) = self.circuit_remaining_ms(&circuit_key) {
+                return Err(self.circuit_open_error("SSH exec", remaining_ms));
+            }
+        }
+
+        let max_attempts = if policy.enabled {
+            policy.max_attempts.max(1)
+        } else {
+            1
+        };
+        let mut attempt = 0;
+        while attempt < max_attempts {
+            attempt += 1;
+            match self
+                .exec_command_once(args, command.clone(), timeout_ms, requested_timeout)
+                .await
+            {
+                Ok(mut result) => {
+                    self.close_circuit(&circuit_key);
+                    if let Some(map) = result.as_object_mut() {
+                        map.insert(
+                            "attempts".to_string(),
+                            Value::Number((attempt as u64).into()),
+                        );
+                        map.insert(
+                            "retries".to_string(),
+                            Value::Number((attempt.saturating_sub(1) as u64).into()),
+                        );
+                        let stability = StabilityMeta {
+                            retried: attempt > 1,
+                            attempts: attempt,
+                            classification: StabilityClassification::None,
+                            next_retry_after_ms: None,
+                            debug_ref: None,
+                        };
+                        if should_emit_stability(&stability, debug_requested) {
+                            map.insert("stability".to_string(), stability.to_value());
+                        }
+                    }
+                    return Ok(result);
+                }
+                Err(err) => {
+                    let classification = self.classify_ssh_error(&err);
+                    if !policy.enabled
+                        || classification != StabilityClassification::Transient
+                        || attempt >= max_attempts
+                    {
+                        if classification == StabilityClassification::Transient
+                            && policy.circuit_open_ms > 0
+                        {
+                            self.open_circuit(&circuit_key, policy.circuit_open_ms);
+                        }
+                        return Err(self.decorate_retry_error(
+                            err,
+                            "SSH exec",
+                            attempt,
+                            max_attempts,
+                            classification,
+                        ));
+                    }
+                    let delay = compute_backoff_delay_ms(
+                        attempt,
+                        policy.base_delay_ms,
+                        policy.max_delay_ms,
+                        policy.jitter,
+                    );
+                    tokio::time::sleep(Duration::from_millis(delay)).await;
+                }
+            }
+        }
+        Err(ToolError::retryable("SSH exec failed after retries"))
     }
 
     async fn exec_command_once(
@@ -327,7 +494,8 @@ impl SshManager {
         let command_clone = command.clone();
         let resolved_clone = resolved.clone();
         let profile_service = self.profile_service.clone();
-        let result = tokio::task::spawn_blocking(move || {
+        let budget_ms = resolve_tool_call_budget_ms().saturating_sub(250);
+        let handle = tokio::task::spawn_blocking(move || {
             exec_blocking(
                 &resolved_clone,
                 profile_service,
@@ -340,9 +508,18 @@ impl SshManager {
                 trace_id,
                 span_id,
             )
-        })
-        .await
-        .map_err(|_| ToolError::internal("SSH exec task failed"))??;
+        });
+        let result = match tokio::time::timeout(Duration::from_millis(budget_ms), handle).await {
+            Ok(joined) => joined.map_err(|_| ToolError::internal("SSH exec task failed"))??,
+            Err(_) => {
+                return Err(
+                    ToolError::timeout("SSH exec exceeded tool-call budget").with_hint(
+                        "Reduce timeouts or use exec_detached/exec_follow for long operations."
+                            .to_string(),
+                    ),
+                )
+            }
+        };
 
         Ok(serde_json::json!({
             "success": result.exit_code == 0 && !result.timed_out,
@@ -1216,11 +1393,39 @@ impl SshManager {
             );
         }
         match self.exec_command(&exec_args).await {
-            Ok(result) => Ok(serde_json::json!({
-                "success": result.get("exitCode").and_then(|v| v.as_i64()) == Some(0),
-                "response": result.get("stdout").cloned().unwrap_or(Value::Null),
-            })),
-            Err(err) => Ok(serde_json::json!({"success": false, "error": err.message})),
+            Ok(result) => {
+                let mut out = serde_json::json!({
+                    "success": result.get("exitCode").and_then(|v| v.as_i64()) == Some(0),
+                    "response": result.get("stdout").cloned().unwrap_or(Value::Null),
+                });
+                if let Some(map) = out.as_object_mut() {
+                    if let Some(attempts) = result.get("attempts") {
+                        map.insert("attempts".to_string(), attempts.clone());
+                    }
+                    if let Some(retries) = result.get("retries") {
+                        map.insert("retries".to_string(), retries.clone());
+                    }
+                    if let Some(stability) = result.get("stability") {
+                        map.insert("stability".to_string(), stability.clone());
+                    }
+                }
+                Ok(out)
+            }
+            Err(err) => {
+                let classification = self.classify_ssh_error(&err);
+                let stability = StabilityMeta {
+                    retried: false,
+                    attempts: 1,
+                    classification,
+                    next_retry_after_ms: None,
+                    debug_ref: None,
+                };
+                Ok(serde_json::json!({
+                    "success": false,
+                    "error": err.message,
+                    "stability": stability,
+                }))
+            }
         }
     }
 
@@ -1595,6 +1800,126 @@ impl SshManager {
                 .with_details(serde_json::json!({"known_profiles": arr.iter().filter_map(|v| v.get("name")).collect::<Vec<_>>() })));
         }
         Ok(None)
+    }
+
+    async fn resolve_stability_policy(&self, args: &Value) -> Result<StabilityPolicy, ToolError> {
+        let defaults = ssh_stability_defaults();
+        let mut policy = defaults.policy_for_mode(StabilityMode::Off);
+        if let Some(connection_stability) = args
+            .get("connection")
+            .and_then(|v| v.as_object())
+            .and_then(|v| v.get("stability"))
+        {
+            apply_stability_source(&mut policy, Some(connection_stability), defaults);
+        }
+        if let Some(profile_name) = self.resolve_profile_name(args).await? {
+            if let Ok(profile) = self
+                .profile_service
+                .get_profile(&profile_name, Some(SSH_PROFILE_TYPE))
+            {
+                let profile_stability = profile.get("data").and_then(|v| v.get("stability"));
+                apply_stability_source(&mut policy, profile_stability, defaults);
+            }
+        }
+        apply_stability_source(&mut policy, args.get("stability"), defaults);
+        Ok(policy)
+    }
+
+    async fn build_stability_key(&self, args: &Value, scope: &str) -> String {
+        if let Some(connection) = args.get("connection").and_then(|v| v.as_object()) {
+            let host = connection
+                .get("host")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown");
+            let port = connection
+                .get("port")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(network_constants::SSH_DEFAULT_PORT as u64);
+            let user = connection
+                .get("username")
+                .or_else(|| connection.get("user"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown");
+            return format!("ssh:{}:{}:{}:{}", scope, host, port, user);
+        }
+        if let Ok(Some(profile_name)) = self.resolve_profile_name(args).await {
+            return format!("ssh:{}:profile:{}", scope, profile_name);
+        }
+        if let Some(target) = args.get("target").and_then(|v| v.as_str()) {
+            return format!("ssh:{}:target:{}", scope, target);
+        }
+        if let Some(project) = args.get("project").and_then(|v| v.as_str()) {
+            return format!("ssh:{}:project:{}", scope, project);
+        }
+        format!("ssh:{}:global", scope)
+    }
+
+    fn classify_ssh_error(&self, err: &ToolError) -> StabilityClassification {
+        if err.message.to_lowercase().contains("circuit is open") {
+            return StabilityClassification::CircuitOpen;
+        }
+        let classified = classify_tool_error(err);
+        if classified != StabilityClassification::Permanent {
+            return classified;
+        }
+        classify_message(&err.message)
+    }
+
+    fn circuit_remaining_ms(&self, key: &str) -> Option<u64> {
+        let now = Instant::now();
+        let mut guard = self.circuits.lock().ok()?;
+        let until = guard.get(key).copied()?;
+        if until <= now {
+            guard.remove(key);
+            return None;
+        }
+        Some((until - now).as_millis() as u64)
+    }
+
+    fn open_circuit(&self, key: &str, duration_ms: u64) {
+        if duration_ms == 0 {
+            return;
+        }
+        if let Ok(mut guard) = self.circuits.lock() {
+            guard.insert(
+                key.to_string(),
+                Instant::now() + Duration::from_millis(duration_ms),
+            );
+        }
+    }
+
+    fn close_circuit(&self, key: &str) {
+        if let Ok(mut guard) = self.circuits.lock() {
+            guard.remove(key);
+        }
+    }
+
+    fn circuit_open_error(&self, scope: &str, remaining_ms: u64) -> ToolError {
+        ToolError::retryable(format!(
+            "{} circuit is open for another {}ms",
+            scope, remaining_ms
+        ))
+        .with_hint(
+            "Transient SSH channel failures exceeded retry budget; retry later or set stability=off."
+                .to_string(),
+        )
+    }
+
+    fn decorate_retry_error(
+        &self,
+        err: ToolError,
+        scope: &str,
+        attempt: usize,
+        max_attempts: usize,
+        classification: StabilityClassification,
+    ) -> ToolError {
+        if classification != StabilityClassification::Transient {
+            return err;
+        }
+        err.with_hint(format!(
+            "{} exhausted retry budget ({}/{}) due to transient SSH failures.",
+            scope, attempt, max_attempts
+        ))
     }
 
     fn build_connection_from_value(
@@ -2000,6 +2325,40 @@ fn resolve_stream_to_artifact_mode() -> Option<String> {
     None
 }
 
+fn ssh_stability_defaults() -> StabilityDefaults {
+    StabilityDefaults {
+        auto: StabilityPreset {
+            max_attempts: 3,
+            base_delay_ms: 250,
+            max_delay_ms: 2_000,
+            jitter: 0.2,
+            circuit_open_ms: 5_000,
+        },
+        aggressive: StabilityPreset {
+            max_attempts: 5,
+            base_delay_ms: 200,
+            max_delay_ms: 3_000,
+            jitter: 0.3,
+            circuit_open_ms: 10_000,
+        },
+    }
+}
+
+fn stability_debug_requested(args: &Value) -> bool {
+    if args
+        .get("stability_debug")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+    {
+        return true;
+    }
+    args.get("stability")
+        .and_then(|v| v.as_object())
+        .and_then(|v| v.get("debug"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+}
+
 fn read_positive_int(value: Option<&Value>) -> Option<u64> {
     let value = value?;
     if let Some(n) = value.as_i64() {
@@ -2186,6 +2545,9 @@ fn connect_session(connection: &SshConnection) -> Result<(Session, Option<String
     let mut session =
         Session::new().map_err(|_| ToolError::internal("Failed to create SSH session"))?;
     session.set_tcp_stream(tcp);
+    // Hard-stop for blocking handshake/auth steps. Without this, slow/broken handshakes can
+    // exceed the MCP tool-call budget and stall the whole stdio server.
+    session.set_timeout(connection.ready_timeout_ms as u32);
     session.handshake().map_err(map_ssh_error)?;
 
     let observed = fingerprint_host_key_sha256(&session);
@@ -2270,14 +2632,16 @@ fn exec_blocking(
     trace_id: Option<String>,
     span_id: Option<String>,
 ) -> Result<ExecResult, ToolError> {
-    let (session, observed) = connect_session(&resolved.connection)?;
+    let started = Instant::now();
+
+    let mut connection = resolved.connection.clone();
+    if let Some(timeout) = timeout_ms {
+        connection.ready_timeout_ms = connection.ready_timeout_ms.min(timeout);
+    }
+
+    let (session, observed) = connect_session(&connection)?;
     if let Some(profile) = resolved.profile_name.as_deref() {
-        let _ = maybe_persist_tofu(
-            &profile_service,
-            profile,
-            &resolved.connection,
-            observed.clone(),
-        );
+        let _ = maybe_persist_tofu(&profile_service, profile, &connection, observed.clone());
     }
 
     let mut channel = session.channel_session().map_err(map_ssh_error)?;
@@ -2344,7 +2708,6 @@ fn exec_blocking(
     )?;
 
     let mut stderr_stream = channel.stderr();
-    let started = Instant::now();
     let mut timed_out = false;
     let mut hard_timed_out = false;
 
