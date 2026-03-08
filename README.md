@@ -28,6 +28,15 @@ Infra is locked down out of the box. Risky capabilities require explicit environ
 
 Without these flags, agents cannot execute arbitrary local commands or leak secrets — even if they try.
 
+Infra also bounds leaked stdio sessions by default:
+
+| Lifecycle guard | Env var | Default |
+|-----------------|---------|---------|
+| Auto-exit idle stdio MCP server | `INFRA_STDIO_IDLE_TIMEOUT_MS` | `30000` ms |
+
+Set `INFRA_STDIO_IDLE_TIMEOUT_MS=0` to disable the idle self-shutdown, but the default is recommended when many CLI sessions may otherwise leave orphaned MCP child processes behind.
+The idle timer only applies while Infra is waiting for the next stdio JSON-RPC line; an in-flight request/tool call is allowed to finish normally before the process exits.
+
 ## Quick demo (30 seconds)
 
 ```text
@@ -538,6 +547,9 @@ No. Infra is fully local, stdio-only. No network calls except the ones you confi
 
 **What if a command hangs or takes too long?**  
 Use `timeout_ms` on any tool call. For long-running tasks, use the Jobs API — async execution with status, logs, and cancel.
+
+**What if multiple CLI sessions leak idle `infra` processes?**  
+By default, an idle stdio server exits after `INFRA_STDIO_IDLE_TIMEOUT_MS` (30 seconds). This bounds leaked child-process buildup when a client forgets to reap old MCP sessions. Set the env var to `0` only if you intentionally need a long-lived pinned stdio server.
 
 **How do I know what the agent actually did?**  
 Every action creates an artifact with full audit trail. Use `mcp_artifacts { action: "list" }` to browse, or check the artifacts directory.

@@ -1,4 +1,5 @@
 use crate::app::App;
+use crate::constants::timeouts::IDLE_TIMEOUT_MS;
 use crate::errors::{ErrorCode, McpError, ToolError};
 use crate::mcp::aliases::canonical_tool_name;
 use crate::mcp::catalog::{list_tools_for_openai, tool_by_name, validate_tool_args};
@@ -17,13 +18,18 @@ use crate::utils::artifacts::{
 use crate::utils::redact::redact_text;
 use serde_json::Value;
 use std::collections::HashSet;
-use std::io::ErrorKind;
+use std::io::{BufRead as _, ErrorKind};
 use std::sync::Arc;
-use tokio::io::{AsyncBufReadExt, AsyncWrite, AsyncWriteExt, BufReader, BufWriter};
+use std::time::Duration;
+#[cfg(test)]
+use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::io::{AsyncWrite, AsyncWriteExt, BufWriter};
+use tokio::sync::mpsc;
 
 const PROTOCOL_VERSION: &str = "2025-06-18";
 const SERVER_NAME: &str = "infra";
 const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
+const STDIO_IDLE_TIMEOUT_ENV: &str = "INFRA_STDIO_IDLE_TIMEOUT_MS";
 
 fn core_tool_names() -> HashSet<String> {
     HashSet::from([
@@ -58,6 +64,110 @@ fn is_graceful_stdio_disconnect(err: &std::io::Error) -> bool {
             | ErrorKind::ConnectionReset
             | ErrorKind::ConnectionAborted
     )
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum ReadLoopEvent {
+    Line(String),
+    Eof,
+    IdleTimeout,
+}
+
+fn resolve_stdio_idle_timeout_ms() -> Option<u64> {
+    match std::env::var(STDIO_IDLE_TIMEOUT_ENV) {
+        Ok(raw) => match raw.trim().parse::<u64>() {
+            Ok(0) => None,
+            Ok(value) => Some(value),
+            Err(_) => Some(IDLE_TIMEOUT_MS),
+        },
+        Err(_) => Some(IDLE_TIMEOUT_MS),
+    }
+}
+
+#[cfg(test)]
+async fn read_loop_event<R>(
+    reader: &mut tokio::io::Lines<BufReader<R>>,
+    idle_timeout_ms: Option<u64>,
+) -> Result<ReadLoopEvent, ToolError>
+where
+    R: tokio::io::AsyncRead + Unpin,
+{
+    let next_line = async {
+        reader
+            .next_line()
+            .await
+            .map_err(|err| ToolError::internal(err.to_string()))
+    };
+
+    let line = if let Some(timeout_ms) = idle_timeout_ms {
+        match tokio::time::timeout(Duration::from_millis(timeout_ms), next_line).await {
+            Ok(result) => result?,
+            Err(_) => return Ok(ReadLoopEvent::IdleTimeout),
+        }
+    } else {
+        next_line.await?
+    };
+
+    Ok(match line {
+        Some(line) => ReadLoopEvent::Line(line),
+        None => ReadLoopEvent::Eof,
+    })
+}
+
+async fn channel_read_loop_event(
+    receiver: &mut mpsc::Receiver<Result<ReadLoopEvent, ToolError>>,
+    idle_timeout_ms: Option<u64>,
+) -> Result<ReadLoopEvent, ToolError> {
+    let next_event = async { receiver.recv().await };
+
+    let event = if let Some(timeout_ms) = idle_timeout_ms {
+        match tokio::time::timeout(Duration::from_millis(timeout_ms), next_event).await {
+            Ok(event) => event,
+            Err(_) => return Ok(ReadLoopEvent::IdleTimeout),
+        }
+    } else {
+        next_event.await
+    };
+
+    match event {
+        Some(result) => result,
+        None => Ok(ReadLoopEvent::Eof),
+    }
+}
+
+fn spawn_stdio_reader_thread() -> Result<mpsc::Receiver<Result<ReadLoopEvent, ToolError>>, ToolError>
+{
+    let (tx, rx) = mpsc::channel(1);
+    std::thread::Builder::new()
+        .name("infra-stdio-reader".to_string())
+        .spawn(move || {
+            let stdin = std::io::stdin();
+            let mut reader = stdin.lock();
+
+            loop {
+                let mut line = String::new();
+                match reader.read_line(&mut line) {
+                    Ok(0) => {
+                        let _ = tx.blocking_send(Ok(ReadLoopEvent::Eof));
+                        break;
+                    }
+                    Ok(_) => {
+                        let line = line.trim_end_matches(['\r', '\n']).to_string();
+                        if tx.blocking_send(Ok(ReadLoopEvent::Line(line))).is_err() {
+                            break;
+                        }
+                    }
+                    Err(err) => {
+                        let _ = tx.blocking_send(Err(ToolError::internal(err.to_string())));
+                        break;
+                    }
+                }
+            }
+        })
+        .map_err(|err| {
+            ToolError::internal(format!("failed to spawn stdio reader thread: {err}"))
+        })?;
+    Ok(rx)
 }
 
 async fn write_jsonrpc_response<W: AsyncWrite + Unpin>(
@@ -640,164 +750,228 @@ impl McpServer {
         }))
     }
 
-    pub async fn run_stdio(&self) -> Result<(), ToolError> {
-        let stdin = tokio::io::stdin();
-        let stdout = tokio::io::stdout();
-        let mut reader = BufReader::new(stdin).lines();
-        let mut writer = BufWriter::new(stdout);
+    #[cfg(test)]
+    async fn run_with_io<R, W>(
+        &self,
+        reader: R,
+        writer: W,
+        idle_timeout_ms: Option<u64>,
+    ) -> Result<(), ToolError>
+    where
+        R: tokio::io::AsyncRead + Unpin,
+        W: AsyncWrite + Unpin,
+    {
+        let mut reader = BufReader::new(reader).lines();
+        let mut writer = BufWriter::new(writer);
 
-        while let Some(line) = reader
-            .next_line()
-            .await
-            .map_err(|err| ToolError::internal(err.to_string()))?
-        {
-            let trimmed = line.trim();
-            if trimmed.is_empty() {
-                continue;
-            }
-
-            let parsed: Value = match serde_json::from_str(trimmed) {
-                Ok(value) => value,
-                Err(_) => {
-                    let response = JsonRpcResponse::failure(
-                        Value::Null,
-                        ErrorCode::ParseError.as_i32(),
-                        "Parse error".to_string(),
-                    );
-                    if !write_jsonrpc_response(&mut writer, &response).await? {
+        loop {
+            match read_loop_event(&mut reader, idle_timeout_ms).await? {
+                ReadLoopEvent::Line(line) => {
+                    if !self.process_jsonrpc_line(&mut writer, line).await? {
                         return Ok(());
                     }
-                    continue;
                 }
-            };
-
-            let request: JsonRpcRequest = match serde_json::from_value(parsed) {
-                Ok(req) => req,
-                Err(_) => {
-                    let response = JsonRpcResponse::failure(
-                        Value::Null,
-                        ErrorCode::InvalidRequest.as_i32(),
-                        "Invalid request".to_string(),
+                ReadLoopEvent::Eof => break,
+                ReadLoopEvent::IdleTimeout => {
+                    eprintln!(
+                        "infra: stdio idle timeout reached ({} ms), exiting",
+                        idle_timeout_ms.unwrap_or(0)
                     );
-                    if !write_jsonrpc_response(&mut writer, &response).await? {
-                        return Ok(());
-                    }
-                    continue;
-                }
-            };
-
-            let response = match request.method.as_str() {
-                "notifications/initialized" => request
-                    .id
-                    .clone()
-                    .map(|id| JsonRpcResponse::success(id, serde_json::json!({}))),
-                _ if request.method.starts_with("notifications/") && request.id.is_none() => None,
-                "initialize" => match request.id.clone() {
-                    Some(id) => Some(JsonRpcResponse::success(id, self.handle_initialize().await)),
-                    None => None,
-                },
-                "tools/list" => match request.id.clone() {
-                    Some(id) => Some(JsonRpcResponse::success(id, self.handle_tools_list().await)),
-                    None => None,
-                },
-                "tools/call" => match request.id.clone() {
-                    Some(id) => {
-                        let params = request.params.as_object().cloned().unwrap_or_default();
-                        let name = params.get("name").and_then(|v| v.as_str()).unwrap_or("");
-                        if name.is_empty() {
-                            Some(JsonRpcResponse::failure(
-                                id,
-                                ErrorCode::InvalidParams.as_i32(),
-                                "Missing tool name".to_string(),
-                            ))
-                        } else {
-                            let args = params.get("arguments").cloned().unwrap_or(Value::Null);
-                            let call = match self.handle_tools_call(name, args).await {
-                                Ok(result) => JsonRpcResponse::success(id, result),
-                                Err(err) => {
-                                    JsonRpcResponse::failure(id, err.code.as_i32(), err.message)
-                                }
-                            };
-                            Some(call)
-                        }
-                    }
-                    None => None,
-                },
-                "resources/list" => match request.id.clone() {
-                    Some(id) => Some(JsonRpcResponse::success(
-                        id,
-                        self.handle_resources_list().await,
-                    )),
-                    None => None,
-                },
-                "resources/read" => match request.id.clone() {
-                    Some(id) => {
-                        let params = request.params.as_object().cloned().unwrap_or_default();
-                        let uri = params.get("uri").and_then(|v| v.as_str()).unwrap_or("");
-                        if uri.is_empty() {
-                            Some(JsonRpcResponse::failure(
-                                id,
-                                ErrorCode::InvalidParams.as_i32(),
-                                "Missing resource uri".to_string(),
-                            ))
-                        } else {
-                            let result = match self.handle_resources_read(uri).await {
-                                Ok(value) => JsonRpcResponse::success(id, value),
-                                Err(err) => {
-                                    JsonRpcResponse::failure(id, err.code.as_i32(), err.message)
-                                }
-                            };
-                            Some(result)
-                        }
-                    }
-                    None => None,
-                },
-                "prompts/list" => match request.id.clone() {
-                    Some(id) => Some(JsonRpcResponse::success(
-                        id,
-                        self.handle_prompts_list().await,
-                    )),
-                    None => None,
-                },
-                "prompts/get" => match request.id.clone() {
-                    Some(id) => {
-                        let params = request.params.as_object().cloned().unwrap_or_default();
-                        let name = params.get("name").and_then(|v| v.as_str()).unwrap_or("");
-                        if name.is_empty() {
-                            Some(JsonRpcResponse::failure(
-                                id,
-                                ErrorCode::InvalidParams.as_i32(),
-                                "Missing prompt name".to_string(),
-                            ))
-                        } else {
-                            let arguments = params.get("arguments").cloned().unwrap_or(Value::Null);
-                            let result = match self.handle_prompts_get(name, arguments).await {
-                                Ok(value) => JsonRpcResponse::success(id, value),
-                                Err(err) => {
-                                    JsonRpcResponse::failure(id, err.code.as_i32(), err.message)
-                                }
-                            };
-                            Some(result)
-                        }
-                    }
-                    None => None,
-                },
-                _ => request.id.clone().map(|id| {
-                    JsonRpcResponse::failure(
-                        id,
-                        ErrorCode::MethodNotFound.as_i32(),
-                        "Method not found".to_string(),
-                    )
-                }),
-            };
-
-            if let Some(response) = response {
-                if !write_jsonrpc_response(&mut writer, &response).await? {
-                    return Ok(());
+                    break;
                 }
             }
         }
 
+        Ok(())
+    }
+
+    async fn run_with_stdio_receiver<W>(
+        &self,
+        mut receiver: mpsc::Receiver<Result<ReadLoopEvent, ToolError>>,
+        writer: W,
+        idle_timeout_ms: Option<u64>,
+    ) -> Result<bool, ToolError>
+    where
+        W: AsyncWrite + Unpin,
+    {
+        let mut writer = BufWriter::new(writer);
+
+        loop {
+            match channel_read_loop_event(&mut receiver, idle_timeout_ms).await? {
+                ReadLoopEvent::Line(line) => {
+                    if !self.process_jsonrpc_line(&mut writer, line).await? {
+                        return Ok(false);
+                    }
+                }
+                ReadLoopEvent::Eof => break,
+                ReadLoopEvent::IdleTimeout => {
+                    eprintln!(
+                        "infra: stdio idle timeout reached ({} ms), exiting",
+                        idle_timeout_ms.unwrap_or(0)
+                    );
+                    return Ok(true);
+                }
+            }
+        }
+
+        Ok(false)
+    }
+
+    async fn process_jsonrpc_line<W: AsyncWrite + Unpin>(
+        &self,
+        writer: &mut BufWriter<W>,
+        line: String,
+    ) -> Result<bool, ToolError> {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            return Ok(true);
+        }
+
+        let parsed: Value = match serde_json::from_str(trimmed) {
+            Ok(value) => value,
+            Err(_) => {
+                let response = JsonRpcResponse::failure(
+                    Value::Null,
+                    ErrorCode::ParseError.as_i32(),
+                    "Parse error".to_string(),
+                );
+                return write_jsonrpc_response(writer, &response).await;
+            }
+        };
+
+        let request: JsonRpcRequest = match serde_json::from_value(parsed) {
+            Ok(req) => req,
+            Err(_) => {
+                let response = JsonRpcResponse::failure(
+                    Value::Null,
+                    ErrorCode::InvalidRequest.as_i32(),
+                    "Invalid request".to_string(),
+                );
+                return write_jsonrpc_response(writer, &response).await;
+            }
+        };
+
+        let response = match request.method.as_str() {
+            "notifications/initialized" => request
+                .id
+                .clone()
+                .map(|id| JsonRpcResponse::success(id, serde_json::json!({}))),
+            _ if request.method.starts_with("notifications/") && request.id.is_none() => None,
+            "initialize" => match request.id.clone() {
+                Some(id) => Some(JsonRpcResponse::success(id, self.handle_initialize().await)),
+                None => None,
+            },
+            "tools/list" => match request.id.clone() {
+                Some(id) => Some(JsonRpcResponse::success(id, self.handle_tools_list().await)),
+                None => None,
+            },
+            "tools/call" => match request.id.clone() {
+                Some(id) => {
+                    let params = request.params.as_object().cloned().unwrap_or_default();
+                    let name = params.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                    if name.is_empty() {
+                        Some(JsonRpcResponse::failure(
+                            id,
+                            ErrorCode::InvalidParams.as_i32(),
+                            "Missing tool name".to_string(),
+                        ))
+                    } else {
+                        let args = params.get("arguments").cloned().unwrap_or(Value::Null);
+                        let call = match self.handle_tools_call(name, args).await {
+                            Ok(result) => JsonRpcResponse::success(id, result),
+                            Err(err) => {
+                                JsonRpcResponse::failure(id, err.code.as_i32(), err.message)
+                            }
+                        };
+                        Some(call)
+                    }
+                }
+                None => None,
+            },
+            "resources/list" => match request.id.clone() {
+                Some(id) => Some(JsonRpcResponse::success(
+                    id,
+                    self.handle_resources_list().await,
+                )),
+                None => None,
+            },
+            "resources/read" => match request.id.clone() {
+                Some(id) => {
+                    let params = request.params.as_object().cloned().unwrap_or_default();
+                    let uri = params.get("uri").and_then(|v| v.as_str()).unwrap_or("");
+                    if uri.is_empty() {
+                        Some(JsonRpcResponse::failure(
+                            id,
+                            ErrorCode::InvalidParams.as_i32(),
+                            "Missing resource uri".to_string(),
+                        ))
+                    } else {
+                        let result = match self.handle_resources_read(uri).await {
+                            Ok(value) => JsonRpcResponse::success(id, value),
+                            Err(err) => {
+                                JsonRpcResponse::failure(id, err.code.as_i32(), err.message)
+                            }
+                        };
+                        Some(result)
+                    }
+                }
+                None => None,
+            },
+            "prompts/list" => match request.id.clone() {
+                Some(id) => Some(JsonRpcResponse::success(
+                    id,
+                    self.handle_prompts_list().await,
+                )),
+                None => None,
+            },
+            "prompts/get" => match request.id.clone() {
+                Some(id) => {
+                    let params = request.params.as_object().cloned().unwrap_or_default();
+                    let name = params.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                    if name.is_empty() {
+                        Some(JsonRpcResponse::failure(
+                            id,
+                            ErrorCode::InvalidParams.as_i32(),
+                            "Missing prompt name".to_string(),
+                        ))
+                    } else {
+                        let arguments = params.get("arguments").cloned().unwrap_or(Value::Null);
+                        let result = match self.handle_prompts_get(name, arguments).await {
+                            Ok(value) => JsonRpcResponse::success(id, value),
+                            Err(err) => {
+                                JsonRpcResponse::failure(id, err.code.as_i32(), err.message)
+                            }
+                        };
+                        Some(result)
+                    }
+                }
+                None => None,
+            },
+            _ => request.id.clone().map(|id| {
+                JsonRpcResponse::failure(
+                    id,
+                    ErrorCode::MethodNotFound.as_i32(),
+                    "Method not found".to_string(),
+                )
+            }),
+        };
+
+        if let Some(response) = response {
+            return write_jsonrpc_response(writer, &response).await;
+        }
+
+        Ok(true)
+    }
+
+    pub async fn run_stdio(&self) -> Result<(), ToolError> {
+        let stdin_events = spawn_stdio_reader_thread()?;
+        let stdout = tokio::io::stdout();
+        let idle_timed_out = self
+            .run_with_stdio_receiver(stdin_events, stdout, resolve_stdio_idle_timeout_ms())
+            .await?;
+        if idle_timed_out {
+            std::process::exit(0);
+        }
         Ok(())
     }
 }
@@ -809,10 +983,16 @@ pub async fn run_stdio() -> Result<(), ToolError> {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_graceful_stdio_disconnect, McpServer, SERVER_VERSION};
+    use super::{
+        is_graceful_stdio_disconnect, read_loop_event, resolve_stdio_idle_timeout_ms, McpServer,
+        ReadLoopEvent, SERVER_VERSION, STDIO_IDLE_TIMEOUT_ENV,
+    };
+    use crate::constants::timeouts::IDLE_TIMEOUT_MS;
     use once_cell::sync::Lazy;
     use serde_json::json;
     use std::io::ErrorKind;
+    use std::time::Duration;
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
     use tokio::sync::Mutex;
 
     static ENV_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
@@ -837,6 +1017,160 @@ mod tests {
         }
         let other = std::io::Error::from(ErrorKind::PermissionDenied);
         assert!(!is_graceful_stdio_disconnect(&other));
+    }
+
+    #[tokio::test]
+    async fn stdio_read_loop_returns_idle_timeout_when_no_input_arrives() {
+        let (_client, server_side) = tokio::io::duplex(64);
+        let mut reader = BufReader::new(server_side).lines();
+        let event = read_loop_event(&mut reader, Some(10))
+            .await
+            .expect("read loop event");
+        assert_eq!(event, ReadLoopEvent::IdleTimeout);
+    }
+
+    #[tokio::test]
+    async fn stdio_idle_timeout_env_zero_disables_timeout() {
+        let _guard = ENV_LOCK.lock().await;
+        let prev_timeout = std::env::var(STDIO_IDLE_TIMEOUT_ENV).ok();
+        std::env::set_var(STDIO_IDLE_TIMEOUT_ENV, "0");
+        assert_eq!(resolve_stdio_idle_timeout_ms(), None);
+        restore_env(STDIO_IDLE_TIMEOUT_ENV, prev_timeout);
+    }
+
+    #[tokio::test]
+    async fn invalid_stdio_idle_timeout_env_falls_back_to_safe_default() {
+        let _guard = ENV_LOCK.lock().await;
+        let prev_timeout = std::env::var(STDIO_IDLE_TIMEOUT_ENV).ok();
+        std::env::set_var(STDIO_IDLE_TIMEOUT_ENV, "not-a-number");
+        assert_eq!(resolve_stdio_idle_timeout_ms(), Some(IDLE_TIMEOUT_MS));
+        restore_env(STDIO_IDLE_TIMEOUT_ENV, prev_timeout);
+    }
+
+    #[tokio::test]
+    async fn stdio_session_finishes_active_request_then_self_terminates_on_idle() {
+        let _guard = ENV_LOCK.lock().await;
+
+        let prev_profiles = std::env::var("MCP_PROFILES_DIR").ok();
+        let prev_timeout = std::env::var(STDIO_IDLE_TIMEOUT_ENV).ok();
+        let tmp_dir =
+            std::env::temp_dir().join(format!("infra-server-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&tmp_dir).expect("create temp dir");
+        std::env::set_var("MCP_PROFILES_DIR", &tmp_dir);
+        std::env::set_var(STDIO_IDLE_TIMEOUT_ENV, "50");
+
+        let server = McpServer::new().await.expect("server");
+        let (mut client_writer, server_reader) = tokio::io::duplex(8 * 1024);
+        let (server_writer, client_reader) = tokio::io::duplex(8 * 1024);
+        let run = tokio::spawn(async move {
+            server
+                .run_with_io(
+                    server_reader,
+                    server_writer,
+                    resolve_stdio_idle_timeout_ms(),
+                )
+                .await
+        });
+
+        let initialize = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {}
+        });
+        client_writer
+            .write_all(format!("{}\n", initialize).as_bytes())
+            .await
+            .expect("write initialize");
+
+        let mut client_reader = BufReader::new(client_reader).lines();
+        let response_line =
+            tokio::time::timeout(Duration::from_millis(500), client_reader.next_line())
+                .await
+                .expect("initialize response before idle timeout")
+                .expect("read initialize response")
+                .expect("initialize response line");
+        let response: serde_json::Value =
+            serde_json::from_str(&response_line).expect("parse initialize response");
+        assert_eq!(response.get("id"), Some(&serde_json::json!(1)));
+        assert!(response.get("result").is_some());
+
+        let run_result = tokio::time::timeout(Duration::from_millis(500), run)
+            .await
+            .expect("server exits after bounded idle")
+            .expect("join run loop");
+        assert!(run_result.is_ok());
+
+        restore_env("MCP_PROFILES_DIR", prev_profiles);
+        restore_env(STDIO_IDLE_TIMEOUT_ENV, prev_timeout);
+        std::fs::remove_dir_all(&tmp_dir).ok();
+    }
+
+    #[tokio::test]
+    async fn stdio_session_keeps_waiting_when_idle_timeout_is_disabled_until_eof() {
+        let _guard = ENV_LOCK.lock().await;
+
+        let prev_profiles = std::env::var("MCP_PROFILES_DIR").ok();
+        let prev_timeout = std::env::var(STDIO_IDLE_TIMEOUT_ENV).ok();
+        let tmp_dir =
+            std::env::temp_dir().join(format!("infra-server-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&tmp_dir).expect("create temp dir");
+        std::env::set_var("MCP_PROFILES_DIR", &tmp_dir);
+        std::env::set_var(STDIO_IDLE_TIMEOUT_ENV, "0");
+
+        let server = McpServer::new().await.expect("server");
+        let (mut client_writer, server_reader) = tokio::io::duplex(8 * 1024);
+        let (server_writer, client_reader) = tokio::io::duplex(8 * 1024);
+        let mut run = tokio::spawn(async move {
+            server
+                .run_with_io(
+                    server_reader,
+                    server_writer,
+                    resolve_stdio_idle_timeout_ms(),
+                )
+                .await
+        });
+
+        let initialize = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {}
+        });
+        client_writer
+            .write_all(format!("{}\n", initialize).as_bytes())
+            .await
+            .expect("write initialize");
+
+        let mut client_reader = BufReader::new(client_reader).lines();
+        let response_line =
+            tokio::time::timeout(Duration::from_millis(500), client_reader.next_line())
+                .await
+                .expect("initialize response before idle timeout")
+                .expect("read initialize response")
+                .expect("initialize response line");
+        let response: serde_json::Value =
+            serde_json::from_str(&response_line).expect("parse initialize response");
+        assert_eq!(response.get("id"), Some(&serde_json::json!(1)));
+        assert!(response.get("result").is_some());
+
+        assert!(
+            tokio::time::timeout(Duration::from_millis(125), &mut run)
+                .await
+                .is_err(),
+            "server should remain alive while the leaked pipe stays open when idle timeout is disabled"
+        );
+
+        drop(client_writer);
+        let run_result = tokio::time::timeout(Duration::from_millis(500), run)
+            .await
+            .expect("server exits after eof")
+            .expect("join run loop");
+        assert!(run_result.is_ok());
+
+        restore_env("MCP_PROFILES_DIR", prev_profiles);
+        restore_env(STDIO_IDLE_TIMEOUT_ENV, prev_timeout);
+        std::fs::remove_dir_all(&tmp_dir).ok();
     }
 
     #[tokio::test]
