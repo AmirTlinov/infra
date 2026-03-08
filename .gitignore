@@ -1,4 +1,5 @@
 /target
+.artifacts/
 **/.agents/
 **/__pycache__/
 *.pyc

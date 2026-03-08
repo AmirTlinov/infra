@@ -85,6 +85,17 @@ cargo build --release
 
 This writes a generated snapshot of the **current checkout at execution time** (tool inventory, capabilities/runbooks inventory, versions, dirty diff, and gate entrypoints) so architecture docs do not need to embed stale “facts of today”.
 
+## Post-merge status
+
+As of **March 8, 2026**, the manifest-first core redesign is merged on `main` in **PR #1**:
+
+- canonical low-entropy MCP core surface is live,
+- SQLite is the writable operational store,
+- capability and runbook semantics remain manifest-first in normal mode,
+- project capability overrides via `MCP_CAPABILITIES_PATH` are honored by both `mcp_capability` and `mcp_operation`.
+
+Generated local proof outputs under `.artifacts/` are intentionally ignored by git so verification logs and review artifacts do not pollute the working tree.
+
 ## First run in 60 seconds
 
 No external services needed — just run a built-in runbook to see Infra in action:
