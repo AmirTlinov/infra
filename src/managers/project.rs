@@ -9,7 +9,7 @@ use serde_json::Value;
 use std::sync::Arc;
 
 const ACTIVE_PROJECT_KEY: &str = "project.active";
-const PROJECT_ACTIONS: &[&str] = &[
+pub(crate) const PROJECT_ACTIONS: &[&str] = &[
     "project_upsert",
     "project_get",
     "project_list",

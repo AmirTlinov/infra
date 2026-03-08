@@ -2,14 +2,15 @@
 GOLDEN_PATH = The recommended sequence that keeps work safe and deterministic.
 ADD_TOOL = The safe workflow for adding a new tool handler.
 
- [CONTENT]
+  [CONTENT]
 Golden path ([GOLDEN_PATH]):
 1) Read MAP.md.
 2) If you are changing an interface, follow [CHANGE_PROTOCOL] (contracts → implementation → tests → docs).
 3) Implement the change.
 4) Add/adjust tests (prefer focused regression for the changed behavior).
-5) Run `./tools/gate` until green (fail-closed).
+5) Run `./tools/gate-code` for engineering verification and `./tools/gate-docs` for doc/contract hygiene; finish with `./tools/gate` until green ([GATE], fail-closed).
 6) Refresh the machine index: `./tools/context`.
+7) Use `docs/RECIPES.md` for copy/paste “request → expected artifact” flows (deploy/rollback/db/incident/triage).
 
 Adding a tool ([ADD_TOOL]):
 1) Follow `REPO_RULES.md` for module placement and wiring.

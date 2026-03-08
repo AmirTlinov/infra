@@ -260,7 +260,7 @@
       "intent": "gitops.rollback",
       "description": "GitOps rollback (ArgoCD): revert git commit, push, sync, verify.",
       "runbook": "gitops.rollback.argocd",
-      "tags": ["gitops", "argocd", "write"],
+      "tags": ["gitops", "argocd", "write", "irreversible"],
       "inputs": {
         "required": ["app_name", "kubeconfig"],
         "defaults": {
@@ -276,13 +276,13 @@
         }
       },
       "when": { "tags_any": ["argocd"] },
-      "effects": { "kind": "write", "requires_apply": true }
+      "effects": { "kind": "write", "requires_apply": true, "irreversible": true }
     },
     "gitops.rollback.flux": {
       "intent": "gitops.rollback",
       "description": "GitOps rollback (Flux): revert git commit, push, reconcile, verify.",
       "runbook": "gitops.rollback.flux",
-      "tags": ["gitops", "flux", "write"],
+      "tags": ["gitops", "flux", "write", "irreversible"],
       "inputs": {
         "required": ["kustomization_name", "kubeconfig"],
         "defaults": {
@@ -298,13 +298,13 @@
         }
       },
       "when": { "tags_any": ["flux"] },
-      "effects": { "kind": "write", "requires_apply": true }
+      "effects": { "kind": "write", "requires_apply": true, "irreversible": true }
     },
     "gitops.release.argocd": {
       "intent": "gitops.release",
       "description": "GitOps release autopilot (ArgoCD): plan→propose→merge→sync→verify→rollback.",
       "runbook": "gitops.release",
-      "tags": ["gitops", "argocd", "write"],
+      "tags": ["gitops", "argocd", "write", "irreversible"],
       "inputs": {
         "required": ["patch", "message", "app_name", "kubeconfig"],
         "defaults": {
@@ -331,13 +331,13 @@
         }
       },
       "when": { "tags_any": ["argocd"] },
-      "effects": { "kind": "write", "requires_apply": true }
+      "effects": { "kind": "write", "requires_apply": true, "irreversible": true }
     },
     "gitops.release.flux": {
       "intent": "gitops.release",
       "description": "GitOps release autopilot (Flux): plan→propose→merge→sync→verify→rollback.",
       "runbook": "gitops.release",
-      "tags": ["gitops", "flux", "write"],
+      "tags": ["gitops", "flux", "write", "irreversible"],
       "inputs": {
         "required": ["patch", "message", "kustomization_name", "kubeconfig"],
         "defaults": {
@@ -364,7 +364,7 @@
         }
       },
       "when": { "tags_any": ["flux"] },
-      "effects": { "kind": "write", "requires_apply": true }
+      "effects": { "kind": "write", "requires_apply": true, "irreversible": true }
     },
     "registry.tags.list": {
       "intent": "registry.tags.list",
@@ -474,6 +474,135 @@
         }
       },
       "when": { "tags_any": ["node"] },
+      "effects": { "kind": "read", "requires_apply": false }
+    },
+    "preflight.bootstrap": {
+      "intent": "preflight.bootstrap",
+      "description": "Bootstrap preflight: workspace diagnose + docker/kubectl/ssh checks.",
+      "runbook": "preflight.bootstrap",
+      "tags": ["preflight", "diagnostic", "read"],
+      "inputs": {
+        "required": [],
+        "defaults": { "namespace": "default" },
+        "map": {
+          "kubeconfig": "target.kubeconfig",
+          "project_name": "context.project_name",
+          "target_name": "context.target_name"
+        }
+      },
+      "effects": { "kind": "read", "requires_apply": false }
+    },
+    "deploy.k8s": {
+      "intent": "deploy",
+      "description": "Deploy to Kubernetes: kustomize render + kubectl apply.",
+      "runbook": "k8s.apply",
+      "tags": ["deploy", "k8s", "write"],
+      "inputs": {
+        "required": ["overlay", "kubeconfig"],
+        "defaults": {},
+        "map": {
+          "kubeconfig": "target.kubeconfig",
+          "sops_age_key_file": "target.sops_age_key_file"
+        }
+      },
+      "when": { "tags_any": ["k8s"] },
+      "effects": { "kind": "write", "requires_apply": true }
+    },
+    "rollback.k8s": {
+      "intent": "rollback",
+      "description": "Rollback a Kubernetes workload via kubectl rollout undo.",
+      "runbook": "k8s.rollback.undo",
+      "tags": ["rollback", "k8s", "write"],
+      "inputs": {
+        "required": ["workload_kind", "workload_name", "kubeconfig"],
+        "defaults": { "namespace": "default", "wait": true },
+        "map": {
+          "kubeconfig": "target.kubeconfig"
+        }
+      },
+      "when": { "tags_any": ["k8s"] },
+      "effects": { "kind": "write", "requires_apply": true }
+    },
+    "db.migrate.postgres": {
+      "intent": "db.migrate",
+      "description": "DB migration (Postgres): execute transactional SQL statements.",
+      "runbook": "db.migrate.postgres",
+      "tags": ["db", "postgres", "migration", "write", "irreversible"],
+      "inputs": {
+        "required": ["statements"],
+        "defaults": {},
+        "map": {
+          "profile_name": "target.postgres_profile"
+        }
+      },
+      "effects": { "kind": "write", "requires_apply": true, "irreversible": true }
+    },
+    "incident.k8s.triage": {
+      "intent": "incident.triage",
+      "description": "Incident triage for Kubernetes workloads: events, pods, describe, logs.",
+      "runbook": "incident.k8s.triage",
+      "tags": ["incident", "k8s", "diagnostic", "read"],
+      "inputs": {
+        "required": ["selector", "workload_kind", "workload_name", "kubeconfig"],
+        "defaults": { "namespace": "default", "logs": true, "tail_lines": 200 },
+        "map": {
+          "kubeconfig": "target.kubeconfig"
+        }
+      },
+      "when": { "tags_any": ["k8s"] },
+      "effects": { "kind": "read", "requires_apply": false }
+    },
+    "repo.triage": {
+      "intent": "repo.triage",
+      "description": "Repo triage: status + last commit + diff snapshot.",
+      "runbook": "repo.triage",
+      "tags": ["repo", "diagnostic", "read"],
+      "inputs": {
+        "required": ["repo_root"],
+        "defaults": {},
+        "map": {
+          "repo_root": "context.root"
+        }
+      },
+      "effects": { "kind": "read", "requires_apply": false }
+    },
+    "smoke.target.baseline": {
+      "intent": "smoke.baseline",
+      "description": "End-to-end smoke for a target: SSH connectivity + DB ping + HTTP health.",
+      "runbook": "smoke.target.baseline",
+      "tags": ["smoke", "e2e", "read"],
+      "inputs": {
+        "required": ["project", "target"],
+        "defaults": {
+          "api_url": "/health",
+          "sql": "SELECT 1"
+        },
+        "map": {}
+      },
+      "effects": { "kind": "read", "requires_apply": false }
+    },
+    "smoke.http.endpoint": {
+      "intent": "smoke.http",
+      "description": "HTTP smoke: fetch URL and assert expected status code.",
+      "runbook": "smoke.http.endpoint",
+      "tags": ["smoke", "http", "read"],
+      "inputs": {
+        "required": ["url"],
+        "defaults": { "expect_code": 200 },
+        "map": {}
+      },
+      "effects": { "kind": "read", "requires_apply": false }
+    },
+    "smoke.manifests.images_plain": {
+      "intent": "smoke.manifests.images",
+      "description": "Smoke manifests: plain render of YAMLs + image inventory + policy violations.",
+      "runbook": "smoke.manifests.images_plain",
+      "tags": ["smoke", "gitops", "repo", "read"],
+      "inputs": {
+        "required": ["repo_root", "path"],
+        "defaults": {},
+        "map": {}
+      },
       "effects": { "kind": "read", "requires_apply": false }
     }
   }

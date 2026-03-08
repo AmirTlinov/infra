@@ -9,7 +9,7 @@ use crate::utils::tool_errors::unknown_action_error;
 use serde_json::Value;
 use std::sync::Arc;
 
-const WORKSPACE_ACTIONS: &[&str] = &[
+pub(crate) const WORKSPACE_ACTIONS: &[&str] = &[
     "summary",
     "suggest",
     "diagnose",

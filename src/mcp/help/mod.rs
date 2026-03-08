@@ -4,25 +4,28 @@ mod summaries;
 
 use crate::app::App;
 use crate::mcp::aliases::builtin_tool_alias_map;
-use crate::mcp::catalog::tool_by_name;
+use crate::mcp::catalog::{core_actions_for_tool, is_hidden_from_discovery, tool_by_name};
 use crate::mcp::legend;
+use crate::mcp::tool_effects;
 use crate::utils::arg_aliases::action_aliases_for_tool;
 use crate::utils::feature_flags::is_unsafe_local_enabled;
 use crate::utils::listing::ListFilters;
 use crate::utils::suggest::suggest;
-use examples::build_tool_example;
+pub(crate) use examples::build_tool_example;
 use search::{build_help_query_payload, resolve_user_aliases};
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 use summaries::{is_core_tool, summaries_ordered, Summary};
 
 fn resolve_tool_tier() -> String {
-    let raw = std::env::var("INFRA_TOOL_TIER").unwrap_or_else(|_| "full".to_string());
+    let raw = std::env::var("INFRA_TOOL_TIER").unwrap_or_else(|_| "core".to_string());
     let normalized = raw.trim().to_lowercase();
     if normalized == "core" {
         "core".to_string()
+    } else if normalized == "expert" || normalized == "full" {
+        "expert".to_string()
     } else {
-        "full".to_string()
+        "core".to_string()
     }
 }
 
@@ -40,12 +43,19 @@ fn extract_actions(tool_name: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
+fn extract_actions_for_tier(tool_name: &str, tier: &str) -> Vec<String> {
+    let mut actions = extract_actions(tool_name);
+    if tier == "core" {
+        if let Some(core_actions) = core_actions_for_tool(tool_name) {
+            actions.retain(|action| core_actions.contains(&action.as_str()));
+        }
+    }
+    actions
+}
+
 fn extract_fields(tool_name: &str) -> Vec<String> {
     let ignored: HashSet<&str> = HashSet::from([
         "action",
-        "output",
-        "store_as",
-        "store_scope",
         "trace_id",
         "span_id",
         "parent_span_id",
@@ -65,17 +75,50 @@ fn extract_fields(tool_name: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
+fn apply_effect_flags(mut example: Value, effects: &tool_effects::ResolvedEffects) -> Value {
+    if let Value::Object(map) = &mut example {
+        if effects.effects.requires_apply {
+            map.entry("apply".to_string()).or_insert(Value::Bool(true));
+        }
+        if effects.effects.irreversible {
+            map.entry("confirm".to_string())
+                .or_insert(Value::Bool(true));
+        }
+    }
+    example
+}
+
 fn summaries_map(ordered: &[(&'static str, Summary)]) -> HashMap<&'static str, Summary> {
     ordered.iter().map(|(k, v)| (*k, *v)).collect()
 }
 
+fn summary_for_tier(tool_name: &str, tier: &str, summary: Summary) -> Summary {
+    if tier == "core" {
+        let usage = match tool_name {
+            "mcp_capability" => Some("list/get/resolve/families/suggest/graph/stats"),
+            "mcp_receipt" => Some("list/get"),
+            "mcp_policy" => Some("resolve/evaluate"),
+            "mcp_profile" => Some("list/get"),
+            "mcp_target" => Some("list/get/resolve"),
+            _ => None,
+        };
+        if let Some(usage) = usage {
+            return Summary {
+                description: summary.description,
+                usage,
+            };
+        }
+    }
+    summary
+}
+
 fn help_overview(tier: &str) -> &'static str {
     if tier == "core" {
-        "Infra (tool_tier=core): используйте workspace/jobs/artifacts (и project опционально); остальные инструменты скрыты из tools/list, но доступны при явном вызове."
+        "Infra (tool_tier=core, default): предпочитайте capability + operation + receipt + policy + profile + target. Raw/expert инструменты, legacy intent/pipeline и provider-specific manager surfaces скрыты из tools/list; для расширенной канонической поверхности включите INFRA_TOOL_TIER=expert."
     } else if is_unsafe_local_enabled() {
-        "Infra подключает PostgreSQL, SSH, HTTP, state, project, context, runbook, capability/intent/evidence, alias, preset, audit, pipeline и (unsafe) local инструменты."
+        "Infra (tool_tier=expert): tools/list показывает расширенную каноническую поверхность. Канонический read/control loop остаётся capability + operation + receipt + policy + profile + target; raw/provider-specific tools, jobs/artifacts, project/context, runbook, audit и (unsafe) local доступны при явном expert discovery."
     } else {
-        "Infra подключает PostgreSQL, SSH, HTTP, state, project, context, runbook, capability/intent/evidence, alias, preset, audit и pipeline инструменты."
+        "Infra (tool_tier=expert): tools/list показывает расширенную каноническую поверхность. Канонический read/control loop остаётся capability + operation + receipt + policy + profile + target; raw/provider-specific tools, jobs/artifacts, project/context, runbook и audit доступны при явном expert discovery."
     }
 }
 
@@ -172,12 +215,16 @@ pub fn build_help_payload(app: &App, args: &Value) -> Value {
             return Value::Object(obj);
         }
 
-        let actions = extract_actions(&tool);
+        let actions = extract_actions_for_tier(&tool, &tier);
         let fields = extract_fields(&tool);
-        let summary = summaries.get(tool.as_str()).copied().unwrap_or(Summary {
-            description: "",
-            usage: "",
-        });
+        let summary = summary_for_tier(
+            &tool,
+            &tier,
+            summaries.get(tool.as_str()).copied().unwrap_or(Summary {
+                description: "",
+                usage: "",
+            }),
+        );
         let mut entry = serde_json::json!({
             "name": tool,
             "description": summary.description,
@@ -252,6 +299,18 @@ pub fn build_help_payload(app: &App, args: &Value) -> Value {
                 return Value::Object(obj);
             }
 
+            let hint_effects = tool_effects::hint_effects_for_tool_action(&tool, &raw_action);
+            let mut example = build_tool_example(&tool, &raw_action);
+            // Flagship DX: show effects for the *example* we return, not only conservative
+            // per-action hints. This prevents misleading guidance for parameterized actions
+            // (e.g. api.request GET=read vs POST=write; psql.query SELECT=read vs DDL=write).
+            let resolved_effects = example
+                .as_ref()
+                .map(|ex| tool_effects::resolve_tool_call_effects(&tool, ex))
+                .unwrap_or_else(|| hint_effects.clone());
+            if let Some(value) = example.take() {
+                example = Some(apply_effect_flags(value, &resolved_effects));
+            }
             return serde_json::json!({
                 "name": entry.get("name").cloned().unwrap_or(Value::Null),
                 "description": entry.get("description").cloned().unwrap_or(Value::Null),
@@ -261,15 +320,28 @@ pub fn build_help_payload(app: &App, args: &Value) -> Value {
                 "action_aliases": entry.get("action_aliases").cloned().unwrap_or(Value::Null),
                 "hint": entry.get("hint").cloned().unwrap_or(Value::Null),
                 "action": raw_action,
-                "example": build_tool_example(&tool, &raw_action),
+                "effects": resolved_effects.to_value(),
+                "effects_hint": hint_effects.to_value(),
+                "requires": { "apply": resolved_effects.effects.requires_apply, "confirm": resolved_effects.effects.irreversible },
+                "example": example,
             });
         }
 
         let key_examples: HashMap<&str, Vec<&str>> = HashMap::from([
+            ("mcp_target", vec!["list", "get", "resolve"]),
+            ("mcp_profile", vec!["list", "get"]),
+            ("mcp_policy", vec!["resolve", "evaluate"]),
+            ("mcp_receipt", vec!["list", "get"]),
+            ("mcp_capability", vec!["list", "resolve", "get"]),
+            ("mcp_operation", vec!["observe", "plan", "apply"]),
             ("mcp_repo", vec!["repo_info", "exec", "apply_patch"]),
             (
                 "mcp_ssh_manager",
                 vec!["exec", "exec_follow", "deploy_file"],
+            ),
+            (
+                "mcp_runbook",
+                vec!["runbook_list", "runbook_get", "runbook_run"],
             ),
             ("mcp_artifacts", vec!["get", "list"]),
             ("mcp_jobs", vec!["follow_job", "tail_job"]),
@@ -294,8 +366,17 @@ pub fn build_help_payload(app: &App, args: &Value) -> Value {
             .iter()
             .take(4)
             .filter_map(|act| {
-                build_tool_example(&tool, act)
-                    .map(|ex| serde_json::json!({"action": act, "example": ex}))
+                build_tool_example(&tool, act).map(|ex| {
+                    let hint_effects = tool_effects::hint_effects_for_tool_action(&tool, act);
+                    let resolved_effects = tool_effects::resolve_tool_call_effects(&tool, &ex);
+                    serde_json::json!({
+                        "action": act,
+                        "effects": resolved_effects.to_value(),
+                        "effects_hint": hint_effects.to_value(),
+                        "requires": { "apply": resolved_effects.effects.requires_apply, "confirm": resolved_effects.effects.irreversible },
+                        "example": apply_effect_flags(ex, &resolved_effects),
+                    })
+                })
             })
             .collect::<Vec<_>>();
 
@@ -316,6 +397,20 @@ pub fn build_help_payload(app: &App, args: &Value) -> Value {
             "actions".to_string(),
             entry.get("actions").cloned().unwrap_or(Value::Null),
         );
+        let action_effects = actions
+            .iter()
+            .map(|act| {
+                let effects = tool_effects::hint_effects_for_tool_action(&tool, act);
+                serde_json::json!({
+                    "action": act,
+                    "effects": effects.to_value(),
+                    "requires": { "apply": effects.effects.requires_apply, "confirm": effects.effects.irreversible },
+                })
+            })
+            .collect::<Vec<_>>();
+        if !action_effects.is_empty() {
+            obj.insert("action_effects".to_string(), Value::Array(action_effects));
+        }
         obj.insert(
             "fields".to_string(),
             entry.get("fields").cloned().unwrap_or(Value::Null),
@@ -329,7 +424,7 @@ pub fn build_help_payload(app: &App, args: &Value) -> Value {
         }
         obj.insert(
             "legend_hint".to_string(),
-            Value::String("См. `legend()` для семантики общих полей (`output`, `store_as`, `preset`, `project/target`).".to_string()),
+            Value::String("См. `legend()` для семантики общих полей (`output`, `store_as`, `project/target`); `preset` теперь compat-only, а runbook normal mode выполняет только manifest-backed name-only сценарии.".to_string()),
         );
         return Value::Object(obj);
     }
@@ -340,13 +435,16 @@ pub fn build_help_payload(app: &App, args: &Value) -> Value {
             if tier == "core" && !is_core_tool(name) {
                 return None;
             }
+            if is_hidden_from_discovery(name) {
+                return None;
+            }
             Some((*name, *summary))
         })
         .collect();
 
     serde_json::json!({
         "overview": help_overview(&tier),
-        "usage": "help({ tool: 'mcp_ssh_manager' }) или help({ tool: 'mcp_ssh_manager', action: 'exec' })",
+        "usage": "help({ tool: 'mcp_target' }) или help({ tool: 'mcp_operation', action: 'plan' })",
         "legend": {
             "hint": "Вся семантика общих полей и правил resolution — в `legend()` (или `help({ tool: 'legend' })`).",
             "includes": ["common_fields", "resolution", "refs", "safety", "golden_path"],
@@ -355,7 +453,7 @@ pub fn build_help_payload(app: &App, args: &Value) -> Value {
             "name": name,
             "description": summary.description,
             "usage": summary.usage,
-            "actions": extract_actions(name),
+            "actions": extract_actions_for_tier(name, &tier),
         })).collect::<Vec<_>>(),
     })
 }

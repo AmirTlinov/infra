@@ -1,56 +1,46 @@
 use crate::errors::ToolError;
 use crate::services::security::Security;
-use crate::utils::fs_atomic::atomic_write_text_file;
+use crate::services::store_db::StoreDb;
 use crate::utils::paths::resolve_profiles_path;
 use serde_json::Value;
-use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
+
+const NAMESPACE: &str = "profiles";
 
 #[derive(Clone)]
 pub struct ProfileService {
     security: Arc<Security>,
-    file_path: std::path::PathBuf,
-    profiles: Arc<RwLock<HashMap<String, Value>>>,
+    store: StoreDb,
 }
 
 impl ProfileService {
     pub fn new(security: Arc<Security>) -> Result<Self, ToolError> {
         let service = Self {
             security,
-            file_path: resolve_profiles_path(),
-            profiles: Arc::new(RwLock::new(HashMap::new())),
+            store: StoreDb::new()?,
         };
-        service.load_profiles()?;
+        service.import_legacy_once()?;
         Ok(service)
     }
 
-    fn load_profiles(&self) -> Result<(), ToolError> {
-        if !self.file_path.exists() {
+    fn import_legacy_once(&self) -> Result<(), ToolError> {
+        let path = resolve_profiles_path();
+        let import_key = format!("file:{}", path.display());
+        if self.store.has_import(NAMESPACE, &import_key)? || !path.exists() {
             return Ok(());
         }
-        let raw = std::fs::read_to_string(&self.file_path)
+        let raw = std::fs::read_to_string(&path)
             .map_err(|err| ToolError::internal(format!("Failed to load profiles: {}", err)))?;
         let parsed: Value = serde_json::from_str(&raw)
             .map_err(|err| ToolError::internal(format!("Failed to parse profiles: {}", err)))?;
         let obj = parsed
             .as_object()
             .ok_or_else(|| ToolError::invalid_params("Profiles file must be a JSON object"))?;
-        let mut guard = self.profiles.write().unwrap();
         for (name, profile) in obj {
             self.validate_stored_profile(name, profile)?;
-            guard.insert(name.to_string(), profile.clone());
+            self.store.upsert(NAMESPACE, name, profile, Some("local"))?;
         }
-        Ok(())
-    }
-
-    fn persist(&self) -> Result<(), ToolError> {
-        let guard = self.profiles.read().unwrap();
-        let data = serde_json::to_string_pretty(&Value::Object(
-            guard.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
-        ))
-        .map_err(|err| ToolError::internal(format!("Failed to serialize profiles: {}", err)))?;
-        atomic_write_text_file(&self.file_path, &format!("{}\n", data), 0o600)
-            .map_err(|err| ToolError::internal(format!("Failed to save profiles: {}", err)))?;
+        self.store.mark_imported(NAMESPACE, &import_key)?;
         Ok(())
     }
 
@@ -95,11 +85,11 @@ impl ProfileService {
         let config_obj = config
             .as_object()
             .ok_or_else(|| ToolError::invalid_params("Profile config must be an object"))?;
-        let mut guard = self.profiles.write().unwrap();
-        let existing = guard
-            .get(name)
-            .cloned()
-            .unwrap_or(Value::Object(Default::default()));
+        let existing = self
+            .store
+            .get(NAMESPACE, name)?
+            .map(|record| record.value)
+            .unwrap_or_else(|| Value::Object(Default::default()));
         let existing_obj = existing.as_object().cloned().unwrap_or_default();
 
         let typ = config_obj
@@ -164,9 +154,9 @@ impl ProfileService {
                 map.insert("secrets".to_string(), Value::Object(secrets));
             }
         }
-        guard.insert(name.to_string(), profile.clone());
-        drop(guard);
-        self.persist()?;
+
+        self.store
+            .upsert(NAMESPACE, name, &profile, Some("local"))?;
 
         Ok(serde_json::json!({
             "name": name,
@@ -183,17 +173,16 @@ impl ProfileService {
                 "Profile name must be a non-empty string",
             ));
         }
-        let guard = self.profiles.read().unwrap();
-        let entry = guard.get(name).ok_or_else(|| {
+        let entry = self.store.get(NAMESPACE, name)?.ok_or_else(|| {
             ToolError::not_found(format!("Profile '{}' not found", name))
                 .with_hint("Use action=profile_list to see known profiles.".to_string())
         })?;
         if let Some(expected) = expected_type {
-            if entry.get("type").and_then(|v| v.as_str()) != Some(expected) {
+            if entry.value.get("type").and_then(|v| v.as_str()) != Some(expected) {
                 return Err(ToolError::conflict(format!(
                     "Profile '{}' is of type '{}', expected '{}'",
                     name,
-                    entry.get("type").and_then(|v| v.as_str()).unwrap_or(""),
+                    entry.value.get("type").and_then(|v| v.as_str()).unwrap_or(""),
                     expected
                 ))
                 .with_hint("Use action=profile_list (optionally filter by type) to locate the correct profile.".to_string()));
@@ -201,10 +190,10 @@ impl ProfileService {
         }
         let mut result = serde_json::json!({
             "name": name,
-            "type": entry.get("type").cloned().unwrap_or(Value::Null),
-            "data": entry.get("data").cloned().unwrap_or(Value::Object(Default::default())),
+            "type": entry.value.get("type").cloned().unwrap_or(Value::Null),
+            "data": entry.value.get("data").cloned().unwrap_or(Value::Object(Default::default())),
         });
-        if let Some(secrets) = entry.get("secrets").and_then(|v| v.as_object()) {
+        if let Some(secrets) = entry.value.get("secrets").and_then(|v| v.as_object()) {
             let mut decrypted = serde_json::Map::new();
             for (field, value) in secrets {
                 let cipher = value.as_str().unwrap_or("");
@@ -219,16 +208,16 @@ impl ProfileService {
     }
 
     pub fn list_profiles(&self, filter_type: Option<&str>) -> Result<Value, ToolError> {
-        let guard = self.profiles.read().unwrap();
         let mut items = Vec::new();
-        for (name, profile) in guard.iter() {
+        for entry in self.store.list(NAMESPACE)? {
+            let profile = entry.value;
             if let Some(filter) = filter_type {
                 if profile.get("type").and_then(|v| v.as_str()) != Some(filter) {
                     continue;
                 }
             }
             items.push(serde_json::json!({
-                "name": name,
+                "name": entry.key,
                 "type": profile.get("type").cloned().unwrap_or(Value::Null),
                 "data": profile.get("data").cloned().unwrap_or(Value::Object(Default::default())),
                 "created_at": profile.get("created_at").cloned().unwrap_or(Value::Null),
@@ -239,15 +228,12 @@ impl ProfileService {
     }
 
     pub fn delete_profile(&self, name: &str) -> Result<Value, ToolError> {
-        let mut guard = self.profiles.write().unwrap();
-        if guard.remove(name).is_none() {
+        if !self.store.delete(NAMESPACE, name)? {
             return Err(
                 ToolError::not_found(format!("Profile '{}' not found", name))
                     .with_hint("Use action=profile_list to see known profiles.".to_string()),
             );
         }
-        drop(guard);
-        self.persist()?;
         Ok(serde_json::json!({"success": true}))
     }
 
@@ -255,6 +241,6 @@ impl ProfileService {
         if name.trim().is_empty() {
             return false;
         }
-        self.profiles.read().unwrap().contains_key(name)
+        self.store.get(NAMESPACE, name).ok().flatten().is_some()
     }
 }

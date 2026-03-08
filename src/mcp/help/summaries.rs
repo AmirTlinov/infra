@@ -22,6 +22,11 @@ pub fn primary_tool_alias(tool_name: &str) -> Option<&'static str> {
         "mcp_vault" => Some("vault"),
         "mcp_runbook" => Some("runbook"),
         "mcp_capability" => Some("capability"),
+        "mcp_operation" => Some("operation"),
+        "mcp_receipt" => Some("mcp_receipt"),
+        "mcp_policy" => Some("mcp_policy"),
+        "mcp_profile" => Some("mcp_profile"),
+        "mcp_target" => Some("mcp_target"),
         "mcp_intent" => Some("intent"),
         "mcp_evidence" => Some("evidence"),
         "mcp_alias" => Some("alias"),
@@ -45,7 +50,14 @@ pub fn help_hint(tool_name: &str, action_name: Option<&str>) -> String {
 pub fn is_core_tool(tool_name: &str) -> bool {
     matches!(
         tool_name,
-        "help" | "legend" | "mcp_workspace" | "mcp_jobs" | "mcp_artifacts" | "mcp_project"
+        "help"
+            | "legend"
+            | "mcp_capability"
+            | "mcp_operation"
+            | "mcp_receipt"
+            | "mcp_policy"
+            | "mcp_profile"
+            | "mcp_target"
     )
 }
 
@@ -61,8 +73,7 @@ pub fn summaries_ordered() -> Vec<(&'static str, Summary)> {
         (
             "legend",
             Summary {
-                description:
-                    "Семантическая легенда: общие поля, порядок resolution, safety-гейты и golden path.",
+                description: "Семантическая легенда: общие поля, порядок resolution, safety-гейты и golden path.",
                 usage: "call_tool → name: 'legend' (или help({ tool: 'legend' }))",
             },
         ),
@@ -90,8 +101,7 @@ pub fn summaries_ordered() -> Vec<(&'static str, Summary)> {
         (
             "mcp_repo",
             Summary {
-                description:
-                    "Repo: безопасные git/render/diff/patch операции в sandbox + allowlisted exec без shell.",
+                description: "Repo: безопасные git/render/diff/patch операции в sandbox + allowlisted exec без shell.",
                 usage: "repo_info/git_diff/render → (apply=true) apply_patch/git_commit/git_revert/git_push → exec",
             },
         ),
@@ -100,13 +110,6 @@ pub fn summaries_ordered() -> Vec<(&'static str, Summary)> {
             Summary {
                 description: "State: переменные между вызовами, поддержка session/persistent.",
                 usage: "set/get/list/unset/clear/dump",
-            },
-        ),
-        (
-            "mcp_project",
-            Summary {
-                description: "Projects: профили, targets и policy profiles для автономных сценариев.",
-                usage: "project_upsert/project_list → project_use → (targets + policy_profiles)",
             },
         ),
         (
@@ -121,20 +124,6 @@ pub fn summaries_ordered() -> Vec<(&'static str, Summary)> {
             Summary {
                 description: "Workspace: сводка, подсказки, диагностика.",
                 usage: "summary/suggest → run → cleanup → diagnose → store_status",
-            },
-        ),
-        (
-            "mcp_jobs",
-            Summary {
-                description: "Jobs: единый реестр async задач (status/wait/logs/cancel/list).",
-                usage: "job_status/job_wait/job_logs_tail/tail_job/follow_job/job_cancel/job_forget/job_list",
-            },
-        ),
-        (
-            "mcp_artifacts",
-            Summary {
-                description: "Artifacts: чтение и листинг artifact:// refs (bounded по умолчанию).",
-                usage: "get/head/tail/list",
             },
         ),
         (
@@ -154,24 +143,77 @@ pub fn summaries_ordered() -> Vec<(&'static str, Summary)> {
         (
             "mcp_runbook",
             Summary {
-                description:
-                    "Runbooks: хранение и выполнение многошаговых сценариев, плюс DSL.",
-                usage: "runbook_upsert/runbook_upsert_dsl/runbook_list → runbook_run/runbook_run_dsl",
+                description: "Runbooks: manifest-backed name-only execution; inline/DSL/mutable paths are compatibility-only in normal mode.",
+                usage: "runbook_list/runbook_get → runbook_run(name-only)",
             },
         ),
         (
             "mcp_capability",
             Summary {
-                description:
-                    "Capabilities: реестр intent→runbook, граф зависимостей и статистика.",
-                usage: "list/get/resolve → set/delete → graph/stats",
+                description: "Capabilities: manifest-backed intent→runbook contracts; mutation actions remain compatibility-only in normal mode.",
+                usage: "list/get/resolve/families → graph/stats (set/delete are compat-only)",
+            },
+        ),
+        (
+            "mcp_operation",
+            Summary {
+                description: "Operations: capability-first observe/plan/apply/verify/rollback с receipt-driven status/cancel.",
+                usage: "observe/plan/apply/verify/rollback → status/cancel/list",
+            },
+        ),
+        (
+            "mcp_receipt",
+            Summary {
+                description: "Receipts: канонический слой для write-истории, operation status и evidence-friendly ссылок.",
+                usage: "list → get",
+            },
+        ),
+        (
+            "mcp_policy",
+            Summary {
+                description: "Policy: канонический слой для effective policy resolution и read-only evaluation перед write-действиями.",
+                usage: "resolve → evaluate",
+            },
+        ),
+        (
+            "mcp_profile",
+            Summary {
+                description: "Profiles: канонический слой для именованных provider profiles, на которые ссылаются targets.",
+                usage: "list → get",
+            },
+        ),
+        (
+            "mcp_target",
+            Summary {
+                description: "Targets: канонический read-only слой для resolved project target bindings (profiles/paths/URLs/policy).",
+                usage: "list → get/resolve",
+            },
+        ),
+        (
+            "mcp_project",
+            Summary {
+                description: "Projects: raw/expert registry для project metadata, targets и policy_profiles.",
+                usage: "project_upsert/project_list → project_use → (targets + policy_profiles)",
+            },
+        ),
+        (
+            "mcp_jobs",
+            Summary {
+                description: "Jobs: единый реестр async задач (status/wait/logs/cancel/list).",
+                usage: "job_status/job_wait/job_logs_tail/tail_job/follow_job/job_cancel/job_forget/job_list",
+            },
+        ),
+        (
+            "mcp_artifacts",
+            Summary {
+                description: "Artifacts: чтение и листинг artifact:// refs (bounded по умолчанию).",
+                usage: "get/head/tail/list",
             },
         ),
         (
             "mcp_intent",
             Summary {
-                description:
-                    "Intent: компиляция и выполнение capability-планов с dry-run и evidence.",
+                description: "Intent (legacy-compatible): компиляция и выполнение capability-планов с manifest-backed runbook resolution под капотом operation flow.",
                 usage: "compile/explain → dry_run → execute (apply=true для write/mixed)",
             },
         ),
@@ -192,7 +234,7 @@ pub fn summaries_ordered() -> Vec<(&'static str, Summary)> {
         (
             "mcp_preset",
             Summary {
-                description: "Presets: reusable наборы аргументов для инструментов.",
+                description: "Presets: compatibility-only storage/list surface for legacy argument bundles.",
                 usage: "preset_upsert/preset_list/preset_get/preset_delete",
             },
         ),
@@ -206,7 +248,7 @@ pub fn summaries_ordered() -> Vec<(&'static str, Summary)> {
         (
             "mcp_pipeline",
             Summary {
-                description: "Pipelines: потоковые HTTP↔SFTP↔PostgreSQL сценарии.",
+                description: "Pipelines (legacy-compatible): потоковые HTTP↔SFTP↔PostgreSQL сценарии.",
                 usage: "run/describe/deploy_smoke",
             },
         ),

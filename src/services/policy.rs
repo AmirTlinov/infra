@@ -46,6 +46,12 @@ pub(crate) struct GitopsWriteScope<'a> {
     pub project_context: Option<&'a Value>,
 }
 
+#[derive(Clone, Debug)]
+struct ResolvedPolicyEntry {
+    source: String,
+    value: Value,
+}
+
 impl PolicyGuard {
     pub fn release(&self) -> Result<(), ToolError> {
         let Some(state_service) = self.state_service.as_ref() else {
@@ -100,60 +106,214 @@ impl PolicyService {
         Ok(serde_json::json!({"success": true}))
     }
 
+    pub fn resolve_effective_policy(
+        &self,
+        inputs: Option<&Value>,
+        project_context: Option<&Value>,
+    ) -> Result<Value, ToolError> {
+        let Some(resolved) = self.resolve_policy_entry(inputs, project_context)? else {
+            return Ok(serde_json::json!({
+                "success": true,
+                "policy": Value::Null,
+                "raw_policy": Value::Null,
+                "resolved_from": Value::Null,
+            }));
+        };
+        let normalized = self.normalize_policy(&resolved.value)?;
+        Ok(serde_json::json!({
+            "success": true,
+            "policy": normalized.to_value(),
+            "raw_policy": resolved.value,
+            "resolved_from": resolved.source,
+        }))
+    }
+
+    pub fn evaluate_effective_policy(
+        &self,
+        intent: Option<&str>,
+        inputs: &Value,
+        project_context: Option<&Value>,
+    ) -> Result<Value, ToolError> {
+        let normalized_intent = intent
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(|value| value.to_string());
+        let Some(resolved) = self.resolve_policy_entry(Some(inputs), project_context)? else {
+            return Ok(serde_json::json!({
+                "success": true,
+                "intent": normalized_intent,
+                "allowed": Value::Null,
+                "policy": Value::Null,
+                "raw_policy": Value::Null,
+                "resolved_from": Value::Null,
+                "evaluation": {
+                    "kind": "unconfigured",
+                    "allowed": Value::Null,
+                }
+            }));
+        };
+
+        let normalized = self.normalize_policy(&resolved.value)?;
+        let evaluation_kind = classify_evaluation_kind(normalized_intent.as_deref(), inputs);
+        let denial = match evaluation_kind {
+            "gitops_write" => normalized_intent
+                .as_deref()
+                .map(|intent| self.assert_gitops_write_allowed(intent, inputs, &normalized))
+                .transpose()
+                .err(),
+            "repo_write" => inputs
+                .get("action")
+                .and_then(|value| value.as_str())
+                .map(|action| self.assert_repo_write_allowed(action, inputs, &normalized))
+                .transpose()
+                .err(),
+            "kubectl_write" => self.assert_kubectl_write_allowed(inputs, &normalized).err(),
+            _ => None,
+        };
+
+        let allowed = denial.is_none();
+        Ok(serde_json::json!({
+            "success": true,
+            "intent": normalized_intent,
+            "allowed": allowed,
+            "policy": normalized.to_value(),
+            "raw_policy": resolved.value,
+            "resolved_from": resolved.source,
+            "evaluation": {
+                "kind": evaluation_kind,
+                "allowed": allowed,
+                "denial": denial.as_ref().map(describe_policy_denial).unwrap_or(Value::Null),
+            }
+        }))
+    }
+
     pub fn resolve_policy(
         &self,
         inputs: Option<&Value>,
         project_context: Option<&Value>,
     ) -> Result<Option<Value>, ToolError> {
-        let direct = self.resolve_policy_value(
-            inputs.and_then(|v| {
-                v.get("policy")
-                    .or_else(|| v.get("policy_profile"))
-                    .or_else(|| v.get("policy_profile_name"))
-            }),
+        Ok(self
+            .resolve_policy_entry(inputs, project_context)?
+            .map(|resolved| resolved.value))
+    }
+
+    pub fn list_active_locks(
+        &self,
+        project_name: Option<&str>,
+        target_name: Option<&str>,
+        repo_root: Option<&str>,
+        trace_id: Option<&str>,
+        include_expired: bool,
+    ) -> Result<Value, ToolError> {
+        let Some(state_service) = self.state_service.as_ref() else {
+            return Err(ToolError::internal(
+                "state service is not available for policy lock visibility",
+            )
+            .with_hint("Enable StateService in bootstrap.".to_string()));
+        };
+
+        let listed = state_service.list(Some("gitops.lock."), Some("persistent"), true)?;
+        let now_ms = chrono::Utc::now().timestamp_millis();
+        let mut items = listed
+            .get("items")
+            .and_then(|v| v.as_array())
+            .into_iter()
+            .flatten()
+            .filter_map(|entry| {
+                let key = entry.get("key").and_then(|v| v.as_str())?;
+                let lock = entry.get("value").cloned().unwrap_or(Value::Null);
+                describe_lock_entry(key, &lock, now_ms)
+            })
+            .filter(|item| {
+                include_expired || item.get("active").and_then(|v| v.as_bool()) == Some(true)
+            })
+            .filter(|item| {
+                matches_lock_filters(item, project_name, target_name, repo_root, trace_id)
+            })
+            .collect::<Vec<_>>();
+
+        items.sort_by(|left, right| {
+            let left_key = left.get("key").and_then(|v| v.as_str()).unwrap_or("");
+            let right_key = right.get("key").and_then(|v| v.as_str()).unwrap_or("");
+            left_key.cmp(right_key)
+        });
+
+        Ok(serde_json::json!({
+            "success": true,
+            "scope": "persistent",
+            "items": items,
+        }))
+    }
+
+    fn resolve_policy_entry(
+        &self,
+        inputs: Option<&Value>,
+        project_context: Option<&Value>,
+    ) -> Result<Option<ResolvedPolicyEntry>, ToolError> {
+        if let Some(resolved) = self.resolve_policy_value(
+            inputs.and_then(|v| v.get("policy")),
             "inputs.policy",
             project_context,
-        )?;
-        if direct.is_some() {
-            return Ok(direct);
+        )? {
+            return Ok(Some(resolved));
         }
 
-        let from_target = self.resolve_policy_value(
+        if let Some(resolved) = self.resolve_policy_value(
+            inputs.and_then(|v| v.get("policy_profile")),
+            "inputs.policy_profile",
+            project_context,
+        )? {
+            return Ok(Some(resolved));
+        }
+
+        if let Some(resolved) = self.resolve_policy_value(
+            inputs.and_then(|v| v.get("policy_profile_name")),
+            "inputs.policy_profile_name",
+            project_context,
+        )? {
+            return Ok(Some(resolved));
+        }
+
+        if let Some(resolved) = self.resolve_policy_value(
             inputs
                 .and_then(|v| v.get("target"))
                 .and_then(|v| v.get("policy")),
-            "target.policy",
+            "inputs.target.policy",
             project_context,
-        )?;
-        if from_target.is_some() {
-            return Ok(from_target);
+        )? {
+            return Ok(Some(resolved));
         }
 
-        let from_context = self.resolve_policy_value(
+        if let Some(resolved) = self.resolve_policy_value(
             project_context
                 .and_then(|v| v.get("target"))
                 .and_then(|v| v.get("policy")),
-            "target.policy",
+            "project_context.target.policy",
             project_context,
-        )?;
-        if from_context.is_some() {
-            return Ok(from_context);
+        )? {
+            return Ok(Some(resolved));
         }
 
         Ok(self.resolve_autonomy_policy())
     }
 
-    fn resolve_autonomy_policy(&self) -> Option<Value> {
+    fn resolve_autonomy_policy(&self) -> Option<ResolvedPolicyEntry> {
         let raw = std::env::var("INFRA_AUTONOMY_POLICY").ok();
         if let Some(raw) = raw {
             let trimmed = raw.trim();
             if trimmed == "operatorless" {
-                return Some(serde_json::json!({"mode": "operatorless"}));
+                return Some(ResolvedPolicyEntry {
+                    source: "env.INFRA_AUTONOMY_POLICY".to_string(),
+                    value: serde_json::json!({"mode": "operatorless"}),
+                });
             }
             if trimmed.starts_with('{') {
                 if let Ok(parsed) = serde_json::from_str::<Value>(trimmed) {
                     if parsed.is_object() {
-                        return Some(parsed);
+                        return Some(ResolvedPolicyEntry {
+                            source: "env.INFRA_AUTONOMY_POLICY".to_string(),
+                            value: parsed,
+                        });
                     }
                 }
             }
@@ -161,7 +321,10 @@ impl PolicyService {
 
         let autonomy = std::env::var("INFRA_AUTONOMY").ok();
         if autonomy.as_deref().map(read_truth_env).unwrap_or(false) {
-            return Some(serde_json::json!({"mode": "operatorless"}));
+            return Some(ResolvedPolicyEntry {
+                source: "env.INFRA_AUTONOMY".to_string(),
+                value: serde_json::json!({"mode": "operatorless"}),
+            });
         }
         None
     }
@@ -184,7 +347,7 @@ impl PolicyService {
         value: Option<&Value>,
         label: &str,
         project_context: Option<&Value>,
-    ) -> Result<Option<Value>, ToolError> {
+    ) -> Result<Option<ResolvedPolicyEntry>, ToolError> {
         let Some(value) = value else {
             return Ok(None);
         };
@@ -192,15 +355,24 @@ impl PolicyService {
             return Ok(None);
         }
         if let Some(name) = value.as_str() {
-            let profile = self.resolve_policy_profile(name, project_context);
+            let trimmed = name.trim();
+            let profile = self.resolve_policy_profile(trimmed, project_context);
             return profile.ok_or_else(|| {
-                ToolError::not_found(format!("{} profile '{}' not found", label, name))
+                ToolError::not_found(format!("{} profile '{}' not found", label, trimmed))
                     .with_hint("Use a known project.policy_profiles key, or pass the policy object directly.".to_string())
-                    .with_details(serde_json::json!({"profile": name}))
-            }).map(Some);
+                    .with_details(serde_json::json!({"profile": trimmed}))
+            }).map(|value| {
+                Some(ResolvedPolicyEntry {
+                    source: format!("{}:{}", label, trimmed),
+                    value,
+                })
+            });
         }
         if value.is_object() {
-            return Ok(Some(value.clone()));
+            return Ok(Some(ResolvedPolicyEntry {
+                source: label.to_string(),
+                value: value.clone(),
+            }));
         }
         Err(ToolError::invalid_params(format!(
             "{} must be an object or profile name",
@@ -675,6 +847,36 @@ impl PolicyService {
     }
 }
 
+fn describe_policy_denial(error: &ToolError) -> Value {
+    serde_json::json!({
+        "message": error.message,
+        "hint": error.hint,
+        "details": error.details,
+        "code": error.code,
+        "retryable": error.retryable,
+    })
+}
+
+fn classify_evaluation_kind(intent: Option<&str>, inputs: &Value) -> &'static str {
+    if intent
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .is_some_and(|value| value.starts_with("gitops."))
+    {
+        return "gitops_write";
+    }
+    if inputs.get("namespace").is_some() {
+        return "kubectl_write";
+    }
+    if inputs.get("repo_root").is_some()
+        || inputs.get("remote").is_some()
+        || inputs.get("merge").is_some()
+    {
+        return "repo_write";
+    }
+    "policy_only"
+}
+
 fn ensure_object<'a>(
     value: &'a Value,
     label: &str,
@@ -882,6 +1084,78 @@ fn compute_repo_root_key(repo_root: &str) -> String {
     hasher.update(repo_root.as_bytes());
     let hash = hex::encode(hasher.finalize());
     format!("repo:{}", &hash[..16])
+}
+
+fn parse_lock_expiry_millis(raw: &str) -> Option<i64> {
+    chrono::DateTime::parse_from_rfc3339(raw)
+        .ok()
+        .map(|dt| dt.timestamp_millis())
+}
+
+fn parse_project_target_from_lock_key(key: &str) -> (Option<String>, Option<String>) {
+    let Some(rest) = key.strip_prefix("gitops.lock.project:") else {
+        return (None, None);
+    };
+    let mut parts = rest.splitn(2, ':');
+    let project = parts
+        .next()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string);
+    let target = parts
+        .next()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string);
+    (project, target)
+}
+
+fn describe_lock_entry(key: &str, lock: &Value, now_ms: i64) -> Option<Value> {
+    let obj = lock.as_object()?;
+    let expires_at = obj.get("expires_at").and_then(|v| v.as_str());
+    let active = expires_at
+        .and_then(parse_lock_expiry_millis)
+        .map(|expires_at_ms| expires_at_ms > now_ms)
+        .unwrap_or(false);
+    let (project_from_key, target_from_key) = parse_project_target_from_lock_key(key);
+
+    Some(serde_json::json!({
+        "key": key,
+        "active": active,
+        "trace_id": obj.get("trace_id").cloned().unwrap_or(Value::Null),
+        "project": obj.get("project").cloned().unwrap_or_else(|| project_from_key.map(Value::String).unwrap_or(Value::Null)),
+        "target": obj.get("target").cloned().unwrap_or_else(|| target_from_key.map(Value::String).unwrap_or(Value::Null)),
+        "repo_root": obj.get("repo_root").cloned().unwrap_or(Value::Null),
+        "intent": obj.get("intent").cloned().unwrap_or(Value::Null),
+        "action": obj.get("action").cloned().unwrap_or(Value::Null),
+        "namespace": obj.get("namespace").cloned().unwrap_or(Value::Null),
+        "acquired_at": obj.get("acquired_at").cloned().unwrap_or(Value::Null),
+        "updated_at": obj.get("updated_at").cloned().unwrap_or(Value::Null),
+        "expires_at": obj.get("expires_at").cloned().unwrap_or(Value::Null),
+        "ttl_ms": obj.get("ttl_ms").cloned().unwrap_or(Value::Null),
+        "count": obj.get("count").cloned().unwrap_or(Value::Null),
+        "lock": Value::Object(obj.clone()),
+    }))
+}
+
+fn matches_lock_filter(actual: Option<&str>, expected: Option<&str>) -> bool {
+    let Some(expected) = expected.map(str::trim).filter(|value| !value.is_empty()) else {
+        return true;
+    };
+    actual.map(|value| value == expected).unwrap_or(false)
+}
+
+fn matches_lock_filters(
+    item: &Value,
+    project_name: Option<&str>,
+    target_name: Option<&str>,
+    repo_root: Option<&str>,
+    trace_id: Option<&str>,
+) -> bool {
+    matches_lock_filter(item.get("project").and_then(|v| v.as_str()), project_name)
+        && matches_lock_filter(item.get("target").and_then(|v| v.as_str()), target_name)
+        && matches_lock_filter(item.get("repo_root").and_then(|v| v.as_str()), repo_root)
+        && matches_lock_filter(item.get("trace_id").and_then(|v| v.as_str()), trace_id)
 }
 
 impl NormalizedPolicy {

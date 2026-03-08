@@ -21,7 +21,7 @@ use tokio_postgres::types::{Json, ToSql, Type};
 use tokio_postgres::{Config, GenericClient, NoTls, Row};
 
 const PG_PROFILE_TYPE: &str = "postgresql";
-const PG_ACTIONS: &[&str] = &[
+pub(crate) const PG_ACTIONS: &[&str] = &[
     "profile_upsert",
     "profile_get",
     "profile_list",

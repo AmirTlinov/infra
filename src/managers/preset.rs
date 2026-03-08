@@ -6,7 +6,7 @@ use crate::utils::tool_errors::unknown_action_error;
 use serde_json::Value;
 use std::sync::Arc;
 
-const PRESET_ACTIONS: &[&str] = &[
+pub(crate) const PRESET_ACTIONS: &[&str] = &[
     "preset_upsert",
     "preset_get",
     "preset_list",

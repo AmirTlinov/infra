@@ -1,6 +1,5 @@
 use crate::errors::ToolError;
 use crate::utils::fs_atomic::path_exists;
-use crate::utils::paths::resolve_context_path;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -48,57 +47,14 @@ const MARKERS: &[(&str, &[&str])] = &[
 
 #[derive(Clone)]
 pub struct ContextService {
-    file_path: PathBuf,
-    contexts: Arc<RwLock<HashMap<String, Value>>>,
+    cache: Arc<RwLock<HashMap<String, Value>>>,
 }
 
 impl ContextService {
     pub fn new() -> Result<Self, ToolError> {
-        let service = Self {
-            file_path: resolve_context_path(),
-            contexts: Arc::new(RwLock::new(HashMap::new())),
-        };
-        service.load()?;
-        Ok(service)
-    }
-
-    fn load(&self) -> Result<(), ToolError> {
-        if !self.file_path.exists() {
-            return Ok(());
-        }
-        let raw = std::fs::read_to_string(&self.file_path)
-            .map_err(|err| ToolError::internal(format!("Failed to load context file: {}", err)))?;
-        let parsed: Value = serde_json::from_str(&raw)
-            .map_err(|err| ToolError::internal(format!("Failed to parse context file: {}", err)))?;
-        let entries = parsed
-            .get("contexts")
-            .and_then(|v| v.as_object())
-            .cloned()
-            .unwrap_or_default();
-        let mut guard = self.contexts.write().unwrap();
-        for (key, value) in entries {
-            if value.is_object() {
-                guard.insert(key, value);
-            }
-        }
-        Ok(())
-    }
-
-    fn persist(&self) -> Result<(), ToolError> {
-        let guard = self.contexts.read().unwrap();
-        let data = serde_json::json!({
-            "version": 1,
-            "contexts": guard.clone(),
-        });
-        let payload = serde_json::to_string_pretty(&data)
-            .map_err(|err| ToolError::internal(format!("Failed to serialize context: {}", err)))?;
-        crate::utils::fs_atomic::atomic_write_text_file(
-            &self.file_path,
-            &format!("{}\n", payload),
-            0o600,
-        )
-        .map_err(|err| ToolError::internal(format!("Failed to save context: {}", err)))?;
-        Ok(())
+        Ok(Self {
+            cache: Arc::new(RwLock::new(HashMap::new())),
+        })
     }
 
     async fn detect_markers(&self, root: &Path) -> (HashMap<String, bool>, HashMap<String, bool>) {
@@ -193,7 +149,7 @@ impl ContextService {
         });
 
         if !refresh {
-            if let Some(existing) = self.contexts.read().unwrap().get(&key) {
+            if let Some(existing) = self.cache.read().unwrap().get(&key).cloned() {
                 return Ok(serde_json::json!({"success": true, "context": existing}));
             }
         }
@@ -221,11 +177,7 @@ impl ContextService {
             "updated_at": chrono::Utc::now().to_rfc3339(),
         });
 
-        self.contexts
-            .write()
-            .unwrap()
-            .insert(key.clone(), payload.clone());
-        self.persist()?;
+        self.cache.write().unwrap().insert(key, payload.clone());
         Ok(serde_json::json!({"success": true, "context": payload}))
     }
 }

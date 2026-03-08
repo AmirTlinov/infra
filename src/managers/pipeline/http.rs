@@ -425,6 +425,8 @@ impl super::PipelineManager {
         let policy = self.api_manager.normalize_retry_policy(
             http_value.get("retry"),
             profile.retry.as_ref(),
+            http_value.get("stability"),
+            profile.data.get("stability"),
             http_value.get("method"),
         );
         let max_attempts = if policy.enabled {

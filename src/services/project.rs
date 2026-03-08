@@ -1,55 +1,43 @@
 use crate::errors::ToolError;
-use crate::utils::fs_atomic::atomic_write_text_file;
+use crate::services::store_db::StoreDb;
 use crate::utils::listing::ListFilters;
 use crate::utils::paths::resolve_projects_path;
 use serde_json::Value;
-use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
+
+const NAMESPACE: &str = "projects";
 
 #[derive(Clone)]
 pub struct ProjectService {
-    file_path: std::path::PathBuf,
-    projects: Arc<RwLock<HashMap<String, Value>>>,
+    store: StoreDb,
 }
 
 impl ProjectService {
     pub fn new() -> Result<Self, ToolError> {
         let service = Self {
-            file_path: resolve_projects_path(),
-            projects: Arc::new(RwLock::new(HashMap::new())),
+            store: StoreDb::new()?,
         };
-        service.load()?;
+        service.import_legacy_once()?;
         Ok(service)
     }
 
-    fn load(&self) -> Result<(), ToolError> {
-        if !self.file_path.exists() {
+    fn import_legacy_once(&self) -> Result<(), ToolError> {
+        let path = resolve_projects_path();
+        let import_key = format!("file:{}", path.display());
+        if self.store.has_import(NAMESPACE, &import_key)? || !path.exists() {
             return Ok(());
         }
-        let raw = std::fs::read_to_string(&self.file_path)
+        let raw = std::fs::read_to_string(&path)
             .map_err(|err| ToolError::internal(format!("Failed to load projects file: {}", err)))?;
         let parsed: Value = serde_json::from_str(&raw).map_err(|err| {
             ToolError::internal(format!("Failed to parse projects file: {}", err))
         })?;
-        let empty = serde_json::Map::new();
-        let obj = parsed.as_object().unwrap_or(&empty);
-        let mut guard = self.projects.write().unwrap();
-        for (name, project) in obj {
-            if self.validate_project(project).is_ok() {
-                guard.insert(name.clone(), project.clone());
+        if let Some(obj) = parsed.as_object() {
+            for (name, project) in obj {
+                self.validate_project(project)?;
+                self.store.upsert(NAMESPACE, name, project, Some("local"))?;
             }
         }
-        Ok(())
-    }
-
-    fn persist(&self) -> Result<(), ToolError> {
-        let guard = self.projects.read().unwrap();
-        let data = serde_json::to_string_pretty(&Value::Object(
-            guard.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
-        ))
-        .map_err(|err| ToolError::internal(format!("Failed to serialize projects: {}", err)))?;
-        atomic_write_text_file(&self.file_path, &format!("{}\n", data), 0o600)
-            .map_err(|err| ToolError::internal(format!("Failed to save projects: {}", err)))?;
+        self.store.mark_imported(NAMESPACE, &import_key)?;
         Ok(())
     }
 
@@ -128,65 +116,40 @@ impl ProjectService {
         Ok(())
     }
 
-    fn normalize_name(&self, name: &str) -> Result<String, ToolError> {
+    pub fn set_project(&self, name: &str, project: &Value) -> Result<Value, ToolError> {
         if name.trim().is_empty() {
             return Err(ToolError::invalid_params(
                 "project name must be a non-empty string",
             ));
         }
-        Ok(name.trim().to_string())
-    }
-
-    pub fn set_project(&self, name: &str, project: &Value) -> Result<Value, ToolError> {
-        let trimmed = self.normalize_name(name)?;
         self.validate_project(project)?;
-        let mut guard = self.projects.write().unwrap();
-        let now = chrono::Utc::now().to_rfc3339();
-        let existing = guard.get(&trimmed).cloned();
-        let mut payload = project.as_object().cloned().unwrap_or_default();
-        payload.insert("updated_at".to_string(), Value::String(now.clone()));
-        payload.insert(
-            "created_at".to_string(),
-            existing
-                .as_ref()
-                .and_then(|v| v.get("created_at").cloned())
-                .unwrap_or(Value::String(now)),
-        );
-        let project_value = Value::Object(payload.clone());
-        guard.insert(trimmed.clone(), project_value.clone());
-        drop(guard);
-        self.persist()?;
-        let mut project_map = payload.clone();
-        project_map.insert("name".to_string(), Value::String(trimmed.clone()));
-        Ok(serde_json::json!({"success": true, "project": Value::Object(project_map)}))
+        self.store
+            .upsert(NAMESPACE, name.trim(), project, Some("local"))?;
+        Ok(serde_json::json!({"success": true, "project": project, "name": name.trim()}))
     }
 
     pub fn get_project(&self, name: &str) -> Result<Value, ToolError> {
-        let trimmed = self.normalize_name(name)?;
-        let guard = self.projects.read().unwrap();
-        let project = guard.get(&trimmed).ok_or_else(|| {
-            ToolError::not_found(format!("Project '{}' not found", trimmed))
+        if name.trim().is_empty() {
+            return Err(ToolError::invalid_params(
+                "project name must be a non-empty string",
+            ));
+        }
+        let project = self.store.get(NAMESPACE, name)?.ok_or_else(|| {
+            ToolError::not_found(format!("project '{}' not found", name))
                 .with_hint("Use action=project_list to see known projects.".to_string())
         })?;
-        let mut project_map = project.as_object().cloned().unwrap_or_default();
-        project_map.insert("name".to_string(), Value::String(trimmed));
-        Ok(serde_json::json!({"success": true, "project": Value::Object(project_map)}))
+        Ok(serde_json::json!({"success": true, "project": project.value}))
     }
 
     pub fn list_projects(&self, filters: &ListFilters) -> Result<Value, ToolError> {
-        let guard = self.projects.read().unwrap();
-        let mut out = Vec::new();
-        let mut names: Vec<String> = guard.keys().cloned().collect();
-        names.sort();
-        for name in names {
-            let project = guard.get(&name).ok_or_else(|| {
-                ToolError::internal("Project disappeared while listing".to_string())
-            })?;
+        let mut items = Vec::new();
+        for entry in self.store.list(NAMESPACE)? {
+            let project = entry.value;
             let mut map = project.as_object().cloned().unwrap_or_default();
-            map.insert("name".to_string(), Value::String(name));
-            out.push(Value::Object(map));
+            map.insert("name".to_string(), Value::String(entry.key));
+            items.push(Value::Object(map));
         }
-        let result = filters.apply(out, &["name", "description"], None);
+        let result = filters.apply(items, &["name", "description"], None);
         Ok(serde_json::json!({
             "success": true,
             "projects": result.items,
@@ -195,16 +158,17 @@ impl ProjectService {
     }
 
     pub fn delete_project(&self, name: &str) -> Result<Value, ToolError> {
-        let trimmed = self.normalize_name(name)?;
-        let mut guard = self.projects.write().unwrap();
-        if guard.remove(&trimmed).is_none() {
+        if name.trim().is_empty() {
+            return Err(ToolError::invalid_params(
+                "project name must be a non-empty string",
+            ));
+        }
+        if !self.store.delete(NAMESPACE, name)? {
             return Err(
-                ToolError::not_found(format!("Project '{}' not found", trimmed))
+                ToolError::not_found(format!("project '{}' not found", name))
                     .with_hint("Use action=project_list to see known projects.".to_string()),
             );
         }
-        drop(guard);
-        self.persist()?;
-        Ok(serde_json::json!({"success": true}))
+        Ok(serde_json::json!({"success": true, "project": name}))
     }
 }

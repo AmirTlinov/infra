@@ -1,5 +1,5 @@
 use crate::errors::{ErrorCode, McpError};
-use crate::mcp::aliases::builtin_tool_aliases;
+use crate::mcp::aliases::builtin_tool_alias_map;
 use crate::utils::feature_flags::is_unsafe_local_enabled;
 use crate::utils::suggest::suggest;
 use jsonschema::JSONSchema;
@@ -14,15 +14,25 @@ pub struct ToolDef {
     pub description: String,
     #[serde(rename = "inputSchema")]
     pub input_schema: Value,
+    #[serde(default, rename = "discoveryOnly", skip_serializing)]
+    pub discovery_only: bool,
 }
 
-static TOOL_CATALOG: Lazy<Vec<ToolDef>> = Lazy::new(|| {
+static DISCOVERY_TOOL_CATALOG: Lazy<Vec<ToolDef>> = Lazy::new(|| {
     let raw = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/tool_catalog.json"));
     serde_json::from_str(raw).expect("tool_catalog.json must be valid JSON")
 });
 
+static TOOL_CATALOG: Lazy<Vec<ToolDef>> = Lazy::new(|| {
+    DISCOVERY_TOOL_CATALOG
+        .iter()
+        .filter(|tool| !tool.discovery_only)
+        .cloned()
+        .collect()
+});
+
 static TOOL_MAP: Lazy<HashMap<String, ToolDef>> = Lazy::new(|| {
-    TOOL_CATALOG
+    DISCOVERY_TOOL_CATALOG
         .iter()
         .cloned()
         .map(|tool| (tool.name.clone(), tool))
@@ -31,7 +41,7 @@ static TOOL_MAP: Lazy<HashMap<String, ToolDef>> = Lazy::new(|| {
 
 static TOOL_VALIDATORS: Lazy<HashMap<String, JSONSchema>> = Lazy::new(|| {
     let mut map = HashMap::new();
-    for tool in TOOL_CATALOG.iter() {
+    for tool in DISCOVERY_TOOL_CATALOG.iter() {
         if let Ok(schema) = JSONSchema::compile(&tool.input_schema) {
             map.insert(tool.name.clone(), schema);
         }
@@ -39,10 +49,13 @@ static TOOL_VALIDATORS: Lazy<HashMap<String, JSONSchema>> = Lazy::new(|| {
     map
 });
 
+// Fields that are useful for server-side plumbing but are intentionally hidden from
+// `tools/list` (OpenAI tool schemas) to keep schemas compact.
+//
+// Note: we intentionally *do not* hide output/store/apply/confirm, because they are
+// part of the flagship AI DX: agents should see how to opt-in to writes and how to
+// shape/store outputs.
 const TOOL_SEMANTIC_FIELDS: &[&str] = &[
-    "output",
-    "store_as",
-    "store_scope",
     "trace_id",
     "span_id",
     "parent_span_id",
@@ -51,8 +64,39 @@ const TOOL_SEMANTIC_FIELDS: &[&str] = &[
     "response_mode",
 ];
 
+const HIDDEN_DISCOVERY_TOOLS: &[&str] = &["mcp_intent", "mcp_pipeline"];
+const CANONICAL_CORE_DISCOVERY_TOOLS: &[&str] = &[
+    "help",
+    "legend",
+    "mcp_capability",
+    "mcp_operation",
+    "mcp_receipt",
+    "mcp_policy",
+    "mcp_profile",
+    "mcp_target",
+];
+pub(crate) const CORE_CAPABILITY_ACTIONS: &[&str] = &[
+    "list", "get", "resolve", "families", "suggest", "graph", "stats",
+];
+pub(crate) const CORE_RECEIPT_ACTIONS: &[&str] = &["list", "get"];
+pub(crate) const CORE_POLICY_ACTIONS: &[&str] = &["resolve", "evaluate"];
+pub(crate) const CORE_PROFILE_ACTIONS: &[&str] = &["list", "get"];
+pub(crate) const CORE_TARGET_ACTIONS: &[&str] = &["list", "get", "resolve"];
+
 pub fn tool_catalog() -> &'static Vec<ToolDef> {
     &TOOL_CATALOG
+}
+
+pub fn discovery_tool_catalog() -> &'static Vec<ToolDef> {
+    &DISCOVERY_TOOL_CATALOG
+}
+
+pub fn is_core_discovery_tool(tool_name: &str) -> bool {
+    CANONICAL_CORE_DISCOVERY_TOOLS.contains(&tool_name)
+}
+
+pub fn is_hidden_from_discovery(tool_name: &str) -> bool {
+    HIDDEN_DISCOVERY_TOOLS.contains(&tool_name)
 }
 
 pub fn tool_by_name(name: &str) -> Option<&'static ToolDef> {
@@ -342,45 +386,71 @@ pub fn strip_tool_semantic_fields(schema: &Value) -> Value {
     schema.clone()
 }
 
-pub fn list_tools_for_openai(tool_tier: &str, core_tools: &HashSet<String>) -> Vec<ToolDef> {
+fn minimize_schema_for_tier(tool_name: &str, tool_tier: &str, schema: &Value) -> Value {
+    if tool_tier != "core" {
+        return schema.clone();
+    }
+    let Some(obj) = schema.as_object() else {
+        return schema.clone();
+    };
+    let mut out = obj.clone();
+    if let Some(core_actions) = core_actions_for_tool(tool_name) {
+        if let Some(props) = out.get_mut("properties").and_then(|v| v.as_object_mut()) {
+            if let Some(action) = props.get_mut("action").and_then(|v| v.as_object_mut()) {
+                action.insert(
+                    "enum".to_string(),
+                    Value::Array(
+                        core_actions
+                            .iter()
+                            .map(|action| Value::String((*action).to_string()))
+                            .collect(),
+                    ),
+                );
+            }
+        }
+    }
+    Value::Object(out)
+}
+
+pub fn core_actions_for_tool(tool_name: &str) -> Option<&'static [&'static str]> {
+    match tool_name {
+        "mcp_capability" => Some(CORE_CAPABILITY_ACTIONS),
+        "mcp_receipt" => Some(CORE_RECEIPT_ACTIONS),
+        "mcp_policy" => Some(CORE_POLICY_ACTIONS),
+        "mcp_profile" => Some(CORE_PROFILE_ACTIONS),
+        "mcp_target" => Some(CORE_TARGET_ACTIONS),
+        _ => None,
+    }
+}
+
+pub fn list_tools_for_openai(tool_tier: &str, _core_tools: &HashSet<String>) -> Vec<ToolDef> {
     let mut tools = Vec::new();
     let unsafe_local = is_unsafe_local_enabled();
-    for tool in TOOL_CATALOG.iter() {
-        if tool_tier == "core" && !core_tools.contains(&tool.name) {
+    let alias_names = builtin_tool_alias_map();
+    for tool in DISCOVERY_TOOL_CATALOG.iter() {
+        if tool_tier == "core" && !is_core_discovery_tool(&tool.name) {
+            continue;
+        }
+        // Keep builtin aliases executable through `tools/call`, but hide them from
+        // discovery so agents reason over the canonical MCP tool surface only.
+        if alias_names.contains_key(tool.name.as_str()) {
+            continue;
+        }
+        if HIDDEN_DISCOVERY_TOOLS.contains(&tool.name.as_str()) {
             continue;
         }
         if tool.name == "mcp_local" && !unsafe_local {
             continue;
         }
-        let normalized = normalize_json_schema_for_openai(&tool.input_schema);
+        let tier_shaped = minimize_schema_for_tier(&tool.name, tool_tier, &tool.input_schema);
+        let normalized = normalize_json_schema_for_openai(&tier_shaped);
         let minimized = strip_tool_semantic_fields(&normalized);
         tools.push(ToolDef {
             name: tool.name.clone(),
             description: tool.description.clone(),
             input_schema: minimized,
+            discovery_only: tool.discovery_only,
         });
     }
-
-    if tool_tier != "core" {
-        let mut names: HashSet<String> = tools.iter().map(|tool| tool.name.clone()).collect();
-        for (alias, target) in builtin_tool_aliases().iter() {
-            if !unsafe_local && *alias == "local" {
-                continue;
-            }
-            if names.contains(*alias) {
-                continue;
-            }
-            let Some(target_tool) = tools.iter().find(|tool| tool.name == *target) else {
-                continue;
-            };
-            tools.push(ToolDef {
-                name: (*alias).to_string(),
-                description: format!("Alias for {}.", target),
-                input_schema: target_tool.input_schema.clone(),
-            });
-            names.insert((*alias).to_string());
-        }
-    }
-
     tools
 }

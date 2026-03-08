@@ -241,11 +241,7 @@ def _validate_contract_content(rel: Path, content_block: str, expected_version: 
         errors.append(f"{rel}: missing fenced code block (required by ## Examples)")
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(prog="gate")
-    parser.add_argument("--strict", action="store_true", help="Fail on hygiene warnings (treat warnings as errors).")
-    args = parser.parse_args()
-
+def run_docs_gate(root: Path, strict: bool) -> int:
     root = _repo_root()
     legend_path = root / "LEGEND.md"
     if not legend_path.exists():
@@ -307,34 +303,76 @@ def main() -> int:
             _validate_contract_content(rel, blocks.content, expected_ver, errors)
 
     if warnings:
-        print("== gate warnings ==")
+        print("== gate-docs warnings ==")
         for w in warnings:
             print(f"- {w}")
-        if args.strict:
+        if strict:
             errors.extend([f"{w} (warning treated as error)" for w in warnings])
 
     if errors:
-        print("== gate errors ==", file=sys.stderr)
+        print("== gate-docs errors ==", file=sys.stderr)
         for e in errors:
             print(f"- {e}", file=sys.stderr)
-        print(f"\nFAIL: gate ({len(errors)} error(s)).", file=sys.stderr)
+        print(f"\nFAIL: gate-docs ({len(errors)} error(s)).", file=sys.stderr)
         return 2
 
-    # Run project/language checks (optional, configured by forge).
+    print("OK: gate-docs")
+    return 0
+
+
+def run_code_gate(root: Path) -> int:
     plan = _iter_plan_lines(root / "tools" / "gate.plan")
     plan_failures = 0
     if plan:
-        print("\n== gate plan ==")
+        print("== gate-code plan ==")
     for cmd in plan:
         print(f"\n$ {cmd}")
         rc = subprocess.call(cmd, shell=True, cwd=root)
         if rc != 0:
             plan_failures += 1
-            print(f"gate: plan command failed (rc={rc})", file=sys.stderr)
+            print(f"gate-code: plan command failed (rc={rc})", file=sys.stderr)
 
     if plan_failures:
-        print(f"\nFAIL: gate plan had {plan_failures} failing command(s).", file=sys.stderr)
+        print(
+            f"\nFAIL: gate-code plan had {plan_failures} failing command(s).",
+            file=sys.stderr,
+        )
         return 1
+
+    print("OK: gate-code")
+    return 0
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(prog="gate")
+    parser.add_argument(
+        "--strict",
+        action="store_true",
+        help="Fail on hygiene warnings (treat warnings as errors).",
+    )
+    parser.add_argument(
+        "--mode",
+        choices=("full", "docs", "code"),
+        default="full",
+        help="Run docs-only, code-only, or the full gate.",
+    )
+    args = parser.parse_args()
+
+    root = _repo_root()
+    if args.mode == "docs":
+        return run_docs_gate(root, args.strict)
+    if args.mode == "code":
+        return run_code_gate(root)
+
+    print("== gate-docs ==")
+    docs_rc = run_docs_gate(root, args.strict)
+    if docs_rc != 0:
+        return docs_rc
+
+    print("\n== gate-code ==")
+    code_rc = run_code_gate(root)
+    if code_rc != 0:
+        return code_rc
 
     print("\nOK: gate")
     return 0

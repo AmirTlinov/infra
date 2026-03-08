@@ -7,7 +7,7 @@ use chrono::TimeZone;
 use serde_json::Value;
 use std::sync::Arc;
 
-const JOB_ACTIONS: &[&str] = &[
+pub(crate) const JOB_ACTIONS: &[&str] = &[
     "job_status",
     "job_wait",
     "job_logs_tail",

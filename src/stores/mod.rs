@@ -1,2 +1,1 @@
-pub mod file_job_store;
-pub mod memory_job_store;
+// Legacy store modules were removed once job persistence moved onto the shared SQLite store.

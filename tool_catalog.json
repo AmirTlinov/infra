@@ -86,6 +86,12 @@
         },
         "parent_span_id": {
           "type": "string"
+        },
+        "apply": {
+          "type": "boolean"
+        },
+        "confirm": {
+          "type": "boolean"
         }
       },
       "additionalProperties": false
@@ -162,6 +168,12 @@
         },
         "parent_span_id": {
           "type": "string"
+        },
+        "apply": {
+          "type": "boolean"
+        },
+        "confirm": {
+          "type": "boolean"
         }
       },
       "additionalProperties": false
@@ -273,6 +285,12 @@
         },
         "preset_name": {
           "type": "string"
+        },
+        "apply": {
+          "type": "boolean"
+        },
+        "confirm": {
+          "type": "boolean"
         }
       },
       "required": [
@@ -399,6 +417,12 @@
         },
         "preset_name": {
           "type": "string"
+        },
+        "apply": {
+          "type": "boolean"
+        },
+        "confirm": {
+          "type": "boolean"
         }
       },
       "required": [
@@ -521,6 +545,12 @@
         },
         "preset_name": {
           "type": "string"
+        },
+        "apply": {
+          "type": "boolean"
+        },
+        "confirm": {
+          "type": "boolean"
         }
       },
       "required": [
@@ -660,6 +690,12 @@
         "where": {
           "type": "object",
           "description": "Exact-match filters on list item fields."
+        },
+        "apply": {
+          "type": "boolean"
+        },
+        "confirm": {
+          "type": "boolean"
         }
       },
       "required": [
@@ -782,6 +818,12 @@
         },
         "preset_name": {
           "type": "string"
+        },
+        "apply": {
+          "type": "boolean"
+        },
+        "confirm": {
+          "type": "boolean"
         }
       },
       "required": [
@@ -833,13 +875,28 @@
           "type": "string"
         },
         "limit": {
-          "type": "number"
+          "type": "integer"
         },
         "include_untagged": {
           "type": "boolean"
         },
         "name": {
           "type": "string"
+        },
+        "offset": {
+          "type": "integer"
+        },
+        "query": {
+          "type": "string"
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "where": {
+          "type": "object"
         },
         "runbook": {
           "type": "object"
@@ -883,6 +940,9 @@
           ]
         },
         "apply": {
+          "type": "boolean"
+        },
+        "confirm": {
           "type": "boolean"
         },
         "cleanup": {
@@ -1160,6 +1220,12 @@
         },
         "preset_name": {
           "type": "string"
+        },
+        "apply": {
+          "type": "boolean"
+        },
+        "confirm": {
+          "type": "boolean"
         }
       },
       "required": [
@@ -1297,6 +1363,12 @@
         },
         "preset_name": {
           "type": "string"
+        },
+        "apply": {
+          "type": "boolean"
+        },
+        "confirm": {
+          "type": "boolean"
         }
       },
       "required": [
@@ -1327,6 +1399,32 @@
         "name": {
           "type": "string"
         },
+        "limit": {
+          "type": "integer",
+          "description": "Max items to return."
+        },
+        "offset": {
+          "type": "integer",
+          "description": "Items to skip before returning results."
+        },
+        "query": {
+          "type": "string",
+          "description": "Free-text search across name/description."
+        },
+        "tags": {
+          "type": [
+            "array",
+            "string"
+          ],
+          "items": {
+            "type": "string"
+          },
+          "description": "Filter by tags (array or comma-separated string)."
+        },
+        "where": {
+          "type": "object",
+          "description": "Exact-match filters on list item fields."
+        },
         "runbook": {
           "type": "object"
         },
@@ -1348,6 +1446,12 @@
             "session",
             "persistent"
           ]
+        },
+        "apply": {
+          "type": "boolean"
+        },
+        "confirm": {
+          "type": "boolean"
         },
         "stop_on_error": {
           "type": "boolean"
@@ -1432,32 +1536,6 @@
         },
         "preset_name": {
           "type": "string"
-        },
-        "limit": {
-          "type": "integer",
-          "description": "Max items to return."
-        },
-        "offset": {
-          "type": "integer",
-          "description": "Items to skip before returning results."
-        },
-        "query": {
-          "type": "string",
-          "description": "Free-text search across name/description."
-        },
-        "where": {
-          "type": "object",
-          "description": "Exact-match filters on list item fields."
-        },
-        "tags": {
-          "type": [
-            "array",
-            "string"
-          ],
-          "items": {
-            "type": "string"
-          },
-          "description": "Filter by tags (array or comma-separated string)."
         }
       },
       "required": [
@@ -1475,14 +1553,15 @@
         "action": {
           "type": "string",
           "enum": [
-            "list",
-            "get",
-            "set",
             "delete",
-            "resolve",
-            "suggest",
+            "families",
+            "get",
             "graph",
-            "stats"
+            "list",
+            "resolve",
+            "set",
+            "stats",
+            "suggest"
           ]
         },
         "name": {
@@ -1612,6 +1691,12 @@
         },
         "preset_name": {
           "type": "string"
+        },
+        "apply": {
+          "type": "boolean"
+        },
+        "confirm": {
+          "type": "boolean"
         }
       },
       "required": [
@@ -1639,6 +1724,9 @@
           "type": "object"
         },
         "apply": {
+          "type": "boolean"
+        },
+        "confirm": {
           "type": "boolean"
         },
         "project": {
@@ -1858,6 +1946,12 @@
         },
         "preset_name": {
           "type": "string"
+        },
+        "apply": {
+          "type": "boolean"
+        },
+        "confirm": {
+          "type": "boolean"
         }
       },
       "required": [
@@ -1981,6 +2075,12 @@
         "where": {
           "type": "object",
           "description": "Exact-match filters on list item fields."
+        },
+        "apply": {
+          "type": "boolean"
+        },
+        "confirm": {
+          "type": "boolean"
         }
       },
       "required": [
@@ -2094,6 +2194,12 @@
         "where": {
           "type": "object",
           "description": "Exact-match filters on list item fields."
+        },
+        "apply": {
+          "type": "boolean"
+        },
+        "confirm": {
+          "type": "boolean"
         }
       },
       "required": [
@@ -2207,6 +2313,12 @@
         },
         "parent_span_id": {
           "type": "string"
+        },
+        "apply": {
+          "type": "boolean"
+        },
+        "confirm": {
+          "type": "boolean"
         }
       },
       "required": [
@@ -2444,6 +2556,12 @@
         },
         "preset_name": {
           "type": "string"
+        },
+        "apply": {
+          "type": "boolean"
+        },
+        "confirm": {
+          "type": "boolean"
         }
       },
       "required": [
@@ -2628,6 +2746,12 @@
         },
         "preset_name": {
           "type": "string"
+        },
+        "apply": {
+          "type": "boolean"
+        },
+        "confirm": {
+          "type": "boolean"
         }
       },
       "required": [
@@ -2825,6 +2949,9 @@
         },
         "preset_name": {
           "type": "string"
+        },
+        "confirm": {
+          "type": "boolean"
         }
       },
       "required": [
@@ -3088,6 +3215,12 @@
         },
         "preset_name": {
           "type": "string"
+        },
+        "apply": {
+          "type": "boolean"
+        },
+        "confirm": {
+          "type": "boolean"
         }
       },
       "required": [
@@ -3110,6 +3243,7 @@
             "profile_list",
             "profile_delete",
             "profile_test",
+            "connect",
             "authorized_keys_add",
             "exec",
             "exec_detached",
@@ -3241,6 +3375,13 @@
         "start_timeout_ms": {
           "type": "integer"
         },
+        "stability": {
+          "type": [
+            "string",
+            "object",
+            "boolean"
+          ]
+        },
         "pty": {
           "type": [
             "boolean",
@@ -3354,6 +3495,12 @@
         },
         "preset_name": {
           "type": "string"
+        },
+        "apply": {
+          "type": "boolean"
+        },
+        "confirm": {
+          "type": "boolean"
         }
       },
       "required": [
@@ -3490,6 +3637,13 @@
         "retry": {
           "type": "object"
         },
+        "stability": {
+          "type": [
+            "string",
+            "object",
+            "boolean"
+          ]
+        },
         "pagination": {
           "type": "object"
         },
@@ -3576,6 +3730,12 @@
         },
         "preset_name": {
           "type": "string"
+        },
+        "apply": {
+          "type": "boolean"
+        },
+        "confirm": {
+          "type": "boolean"
         }
       },
       "required": [
@@ -3839,6 +3999,12 @@
         },
         "preset_name": {
           "type": "string"
+        },
+        "apply": {
+          "type": "boolean"
+        },
+        "confirm": {
+          "type": "boolean"
         }
       },
       "required": [
@@ -4102,6 +4268,12 @@
         },
         "preset_name": {
           "type": "string"
+        },
+        "apply": {
+          "type": "boolean"
+        },
+        "confirm": {
+          "type": "boolean"
         }
       },
       "required": [
@@ -4124,6 +4296,7 @@
             "profile_list",
             "profile_delete",
             "profile_test",
+            "connect",
             "authorized_keys_add",
             "exec",
             "exec_detached",
@@ -4368,6 +4541,12 @@
         },
         "preset_name": {
           "type": "string"
+        },
+        "apply": {
+          "type": "boolean"
+        },
+        "confirm": {
+          "type": "boolean"
         }
       },
       "required": [
@@ -4494,6 +4673,12 @@
         },
         "preset_name": {
           "type": "string"
+        },
+        "apply": {
+          "type": "boolean"
+        },
+        "confirm": {
+          "type": "boolean"
         }
       },
       "required": [
@@ -4616,6 +4801,12 @@
         },
         "preset_name": {
           "type": "string"
+        },
+        "apply": {
+          "type": "boolean"
+        },
+        "confirm": {
+          "type": "boolean"
         }
       },
       "required": [
@@ -4838,6 +5029,12 @@
         },
         "preset_name": {
           "type": "string"
+        },
+        "apply": {
+          "type": "boolean"
+        },
+        "confirm": {
+          "type": "boolean"
         }
       },
       "required": [
@@ -5060,6 +5257,12 @@
         },
         "preset_name": {
           "type": "string"
+        },
+        "apply": {
+          "type": "boolean"
+        },
+        "confirm": {
+          "type": "boolean"
         }
       },
       "required": [
@@ -5257,6 +5460,9 @@
         },
         "preset_name": {
           "type": "string"
+        },
+        "confirm": {
+          "type": "boolean"
         }
       },
       "required": [
@@ -5371,6 +5577,12 @@
         },
         "preset_name": {
           "type": "string"
+        },
+        "apply": {
+          "type": "boolean"
+        },
+        "confirm": {
+          "type": "boolean"
         }
       },
       "required": [
@@ -5494,6 +5706,12 @@
         },
         "preset_name": {
           "type": "string"
+        },
+        "apply": {
+          "type": "boolean"
+        },
+        "confirm": {
+          "type": "boolean"
         }
       },
       "required": [
@@ -5616,6 +5834,12 @@
         },
         "preset_name": {
           "type": "string"
+        },
+        "apply": {
+          "type": "boolean"
+        },
+        "confirm": {
+          "type": "boolean"
         }
       },
       "required": [
@@ -5717,6 +5941,9 @@
           ]
         },
         "apply": {
+          "type": "boolean"
+        },
+        "confirm": {
           "type": "boolean"
         },
         "cleanup": {
@@ -5994,6 +6221,12 @@
         },
         "preset_name": {
           "type": "string"
+        },
+        "apply": {
+          "type": "boolean"
+        },
+        "confirm": {
+          "type": "boolean"
         }
       },
       "required": [
@@ -6131,6 +6364,12 @@
         },
         "preset_name": {
           "type": "string"
+        },
+        "apply": {
+          "type": "boolean"
+        },
+        "confirm": {
+          "type": "boolean"
         }
       },
       "required": [
@@ -6161,6 +6400,24 @@
         "name": {
           "type": "string"
         },
+        "limit": {
+          "type": "integer"
+        },
+        "offset": {
+          "type": "integer"
+        },
+        "query": {
+          "type": "string"
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "where": {
+          "type": "object"
+        },
         "runbook": {
           "type": "object"
         },
@@ -6182,6 +6439,12 @@
             "session",
             "persistent"
           ]
+        },
+        "apply": {
+          "type": "boolean"
+        },
+        "confirm": {
+          "type": "boolean"
         },
         "stop_on_error": {
           "type": "boolean"
@@ -6283,14 +6546,15 @@
         "action": {
           "type": "string",
           "enum": [
-            "list",
-            "get",
-            "set",
             "delete",
-            "resolve",
-            "suggest",
+            "families",
+            "get",
             "graph",
-            "stats"
+            "list",
+            "resolve",
+            "set",
+            "stats",
+            "suggest"
           ]
         },
         "name": {
@@ -6420,6 +6684,12 @@
         },
         "preset_name": {
           "type": "string"
+        },
+        "apply": {
+          "type": "boolean"
+        },
+        "confirm": {
+          "type": "boolean"
         }
       },
       "required": [
@@ -6447,6 +6717,9 @@
           "type": "object"
         },
         "apply": {
+          "type": "boolean"
+        },
+        "confirm": {
           "type": "boolean"
         },
         "project": {
@@ -6666,6 +6939,12 @@
         },
         "preset_name": {
           "type": "string"
+        },
+        "apply": {
+          "type": "boolean"
+        },
+        "confirm": {
+          "type": "boolean"
         }
       },
       "required": [
@@ -6773,6 +7052,12 @@
         },
         "parent_span_id": {
           "type": "string"
+        },
+        "apply": {
+          "type": "boolean"
+        },
+        "confirm": {
+          "type": "boolean"
         }
       },
       "required": [
@@ -6870,6 +7155,12 @@
         },
         "parent_span_id": {
           "type": "string"
+        },
+        "apply": {
+          "type": "boolean"
+        },
+        "confirm": {
+          "type": "boolean"
         }
       },
       "required": [
@@ -6983,6 +7274,12 @@
         },
         "parent_span_id": {
           "type": "string"
+        },
+        "apply": {
+          "type": "boolean"
+        },
+        "confirm": {
+          "type": "boolean"
         }
       },
       "required": [
@@ -7220,12 +7517,518 @@
         },
         "preset_name": {
           "type": "string"
+        },
+        "apply": {
+          "type": "boolean"
+        },
+        "confirm": {
+          "type": "boolean"
         }
       },
       "required": [
         "action"
       ],
       "additionalProperties": false
+    }
+  },
+  {
+    "name": "mcp_operation",
+    "description": "Capability-first operation kernel (observe/plan/apply/verify/rollback + status/cancel/list).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "observe",
+            "plan",
+            "apply",
+            "verify",
+            "rollback",
+            "status",
+            "cancel",
+            "list"
+          ]
+        },
+        "family": {
+          "type": "string"
+        },
+        "capability": {
+          "type": "string"
+        },
+        "intent": {
+          "type": "string"
+        },
+        "operation_id": {
+          "type": "string"
+        },
+        "input": {
+          "type": "object"
+        },
+        "project": {
+          "type": "string"
+        },
+        "project_name": {
+          "type": "string"
+        },
+        "target": {
+          "type": "string"
+        },
+        "project_target": {
+          "type": "string"
+        },
+        "environment": {
+          "type": "string"
+        },
+        "cwd": {
+          "type": "string"
+        },
+        "repo_root": {
+          "type": "string"
+        },
+        "context_key": {
+          "type": "string"
+        },
+        "refresh": {
+          "type": "boolean"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "limit": {
+          "type": "integer",
+          "description": "Max items to return."
+        },
+        "status": {
+          "type": "string"
+        },
+        "stop_on_error": {
+          "type": "boolean"
+        },
+        "template_missing": {
+          "type": "string",
+          "enum": [
+            "error",
+            "empty",
+            "null",
+            "undefined"
+          ]
+        },
+        "save_evidence": {
+          "type": "boolean"
+        },
+        "output": {
+          "type": "object",
+          "description": "Output shaping (path/pick/omit/map).",
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "pick": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "omit": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "map": {
+              "type": "object"
+            },
+            "missing": {
+              "type": "string",
+              "enum": [
+                "error",
+                "empty",
+                "null",
+                "undefined"
+              ]
+            },
+            "default": {
+              "type": [
+                "string",
+                "number",
+                "boolean",
+                "object",
+                "array",
+                "null"
+              ]
+            }
+          },
+          "additionalProperties": true
+        },
+        "store_as": {
+          "type": [
+            "string",
+            "object"
+          ]
+        },
+        "store_scope": {
+          "type": "string",
+          "enum": [
+            "session",
+            "persistent"
+          ]
+        },
+        "trace_id": {
+          "type": "string"
+        },
+        "span_id": {
+          "type": "string"
+        },
+        "parent_span_id": {
+          "type": "string"
+        },
+        "preset": {
+          "type": "string"
+        },
+        "preset_name": {
+          "type": "string"
+        },
+        "apply": {
+          "type": "boolean"
+        },
+        "confirm": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "additionalProperties": true
+    }
+  },
+  {
+    "name": "mcp_receipt",
+    "description": "Canonical receipt surface (discovery/help schema): inspect write receipts and status history without dropping into raw operation state.",
+    "discoveryOnly": true,
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "list",
+            "get"
+          ]
+        },
+        "operation_id": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        },
+        "limit": {
+          "type": "integer",
+          "description": "Max items to return."
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "mcp_policy",
+    "description": "Canonical policy surface (discovery/help schema): resolve or evaluate the effective policy for a target or planned change.",
+    "discoveryOnly": true,
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "resolve",
+            "evaluate"
+          ]
+        },
+        "project": {
+          "type": "string"
+        },
+        "project_name": {
+          "type": "string"
+        },
+        "target": {
+          "type": "string"
+        },
+        "target_name": {
+          "type": "string"
+        },
+        "repo_root": {
+          "type": "string"
+        },
+        "intent": {
+          "type": "string"
+        },
+        "capability": {
+          "type": "string"
+        },
+        "family": {
+          "type": "string"
+        },
+        "inputs": {
+          "type": "object"
+        },
+        "input": {
+          "type": "object"
+        },
+        "project_context": {
+          "type": "object"
+        },
+        "context": {
+          "type": "object"
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "mcp_profile",
+    "description": "Canonical profile surface (discovery/help schema): inspect named provider profiles referenced by targets and operations.",
+    "discoveryOnly": true,
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "list",
+            "get"
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "profile_name": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string"
+        },
+        "include_secrets": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "mcp_target",
+    "description": "Canonical target surface (discovery/help schema): inspect resolved target bindings, profiles, paths, URLs, and policy context.",
+    "discoveryOnly": true,
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "list",
+            "get",
+            "resolve"
+          ]
+        },
+        "project": {
+          "type": "string"
+        },
+        "project_name": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "target_name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "operation",
+    "description": "Alias for mcp_operation.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "observe",
+            "plan",
+            "apply",
+            "verify",
+            "rollback",
+            "status",
+            "cancel",
+            "list"
+          ]
+        },
+        "family": {
+          "type": "string"
+        },
+        "capability": {
+          "type": "string"
+        },
+        "intent": {
+          "type": "string"
+        },
+        "operation_id": {
+          "type": "string"
+        },
+        "input": {
+          "type": "object"
+        },
+        "project": {
+          "type": "string"
+        },
+        "project_name": {
+          "type": "string"
+        },
+        "target": {
+          "type": "string"
+        },
+        "project_target": {
+          "type": "string"
+        },
+        "environment": {
+          "type": "string"
+        },
+        "cwd": {
+          "type": "string"
+        },
+        "repo_root": {
+          "type": "string"
+        },
+        "context_key": {
+          "type": "string"
+        },
+        "refresh": {
+          "type": "boolean"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "limit": {
+          "type": "integer",
+          "description": "Max items to return."
+        },
+        "status": {
+          "type": "string"
+        },
+        "stop_on_error": {
+          "type": "boolean"
+        },
+        "template_missing": {
+          "type": "string",
+          "enum": [
+            "error",
+            "empty",
+            "null",
+            "undefined"
+          ]
+        },
+        "save_evidence": {
+          "type": "boolean"
+        },
+        "output": {
+          "type": "object",
+          "description": "Output shaping (path/pick/omit/map).",
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "pick": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "omit": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "map": {
+              "type": "object"
+            },
+            "missing": {
+              "type": "string",
+              "enum": [
+                "error",
+                "empty",
+                "null",
+                "undefined"
+              ]
+            },
+            "default": {
+              "type": [
+                "string",
+                "number",
+                "boolean",
+                "object",
+                "array",
+                "null"
+              ]
+            }
+          },
+          "additionalProperties": true
+        },
+        "store_as": {
+          "type": [
+            "string",
+            "object"
+          ]
+        },
+        "store_scope": {
+          "type": "string",
+          "enum": [
+            "session",
+            "persistent"
+          ]
+        },
+        "trace_id": {
+          "type": "string"
+        },
+        "span_id": {
+          "type": "string"
+        },
+        "parent_span_id": {
+          "type": "string"
+        },
+        "preset": {
+          "type": "string"
+        },
+        "preset_name": {
+          "type": "string"
+        },
+        "apply": {
+          "type": "boolean"
+        },
+        "confirm": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "additionalProperties": true
     }
   }
 ]

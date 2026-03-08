@@ -6,7 +6,7 @@ use crate::utils::tool_errors::unknown_action_error;
 use serde_json::Value;
 use std::sync::Arc;
 
-const ALIAS_ACTIONS: &[&str] = &[
+pub(crate) const ALIAS_ACTIONS: &[&str] = &[
     "alias_upsert",
     "alias_get",
     "alias_list",

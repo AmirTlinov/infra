@@ -5,7 +5,7 @@ use crate::utils::tool_errors::unknown_action_error;
 use serde_json::Value;
 use std::sync::Arc;
 
-const STATE_ACTIONS: &[&str] = &["set", "get", "list", "unset", "clear", "dump"];
+pub(crate) const STATE_ACTIONS: &[&str] = &["set", "get", "list", "unset", "clear", "dump"];
 
 #[derive(Clone)]
 pub struct StateManager {

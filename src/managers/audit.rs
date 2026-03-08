@@ -5,7 +5,8 @@ use crate::utils::tool_errors::unknown_action_error;
 use serde_json::Value;
 use std::sync::Arc;
 
-const AUDIT_ACTIONS: &[&str] = &["audit_list", "audit_tail", "audit_clear", "audit_stats"];
+pub(crate) const AUDIT_ACTIONS: &[&str] =
+    &["audit_list", "audit_tail", "audit_clear", "audit_stats"];
 
 #[derive(Clone)]
 pub struct AuditManager {

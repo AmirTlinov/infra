@@ -9,7 +9,7 @@ use serde_json::Value;
 use std::sync::Arc;
 
 const VAULT_PROFILE_TYPE: &str = "vault";
-const VAULT_ACTIONS: &[&str] = &[
+pub(crate) const VAULT_ACTIONS: &[&str] = &[
     "profile_upsert",
     "profile_get",
     "profile_list",

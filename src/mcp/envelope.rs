@@ -33,6 +33,7 @@ fn present_tool_name(tool: &str, invoked_as: Option<&str>) -> String {
         "mcp_ssh_manager" => "ssh".to_string(),
         "mcp_artifacts" => "artifacts".to_string(),
         "mcp_jobs" => "job".to_string(),
+        "mcp_operation" => "operation".to_string(),
         _ => tool.to_string(),
     }
 }
@@ -491,7 +492,7 @@ pub fn build_ssh_exec_envelope(
         }
     }
 
-    serde_json::json!({
+    let mut envelope = serde_json::json!({
         "success": success,
         "tool": "ssh",
         "action": action_name,
@@ -517,5 +518,11 @@ pub fn build_ssh_exec_envelope(
         "summary": summary,
         "artifact_uri_json": artifact_json_uri,
         "requested_timeout_ms": requested_timeout,
-    })
+    });
+    if let Some(stability) = tool_result.get("stability") {
+        if let Some(map) = envelope.as_object_mut() {
+            map.insert("stability".to_string(), stability.clone());
+        }
+    }
+    envelope
 }

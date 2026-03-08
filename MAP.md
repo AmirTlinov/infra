@@ -6,6 +6,7 @@ Start here ([ENTRYPOINTS]):
 - README.md (human entrypoint)
 - mcp_config.md (MCP client config)
 - docs/AGENT_PLAYBOOK.md (agent workflow)
+- docs/RECIPES.md (intent/runbook recipes: request → expected artifact)
 - docs/DOC_STYLE.md (doc compiler rules)
 - docs/contracts/README.md (contract index)
 - REPO_RULES.md (code structure rules)

@@ -5,7 +5,7 @@ use crate::utils::tool_errors::unknown_action_error;
 use serde_json::Value;
 use std::sync::Arc;
 
-const CONTEXT_ACTIONS: &[&str] = &["get", "refresh", "summary", "list", "stats"];
+pub(crate) const CONTEXT_ACTIONS: &[&str] = &["get", "refresh", "summary", "list", "stats"];
 
 #[derive(Clone)]
 pub struct ContextManager {

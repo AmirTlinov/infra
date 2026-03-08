@@ -8,7 +8,7 @@ use serde_json::Value;
 mod exec;
 mod fs;
 
-const LOCAL_ACTIONS: &[&str] = &[
+pub(crate) const LOCAL_ACTIONS: &[&str] = &[
     "exec", "batch", "fs_read", "fs_write", "fs_list", "fs_stat", "fs_mkdir", "fs_rm",
 ];
 
