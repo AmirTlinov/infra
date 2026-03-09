@@ -19,7 +19,7 @@ use crate::services::project_resolver::ProjectResolver;
 use crate::services::runbook::RunbookService;
 use crate::services::secret_ref::SecretRefResolver;
 use crate::services::security::Security;
-use crate::services::state::StateService;
+use crate::services::state::{new_session_state, SessionState, StateService};
 use crate::services::tool_executor::{ToolExecutor, ToolHandler};
 use crate::services::validation::Validation;
 use crate::services::vault_client::VaultClient;
@@ -36,6 +36,8 @@ pub struct App {
     pub runbook_service: Arc<RunbookService>,
     pub workspace_service: Arc<WorkspaceService>,
     pub runbook_manager: Arc<managers::runbook::RunbookManager>,
+    pub state_service: Arc<StateService>,
+    pub job_service: Arc<JobService>,
 }
 
 impl App {
@@ -69,11 +71,15 @@ impl App {
     }
 
     pub fn initialize() -> Result<Self, ToolError> {
+        Self::initialize_with_session(new_session_state())
+    }
+
+    pub fn initialize_with_session(session_state: SessionState) -> Result<Self, ToolError> {
         let logger = Logger::new("infra");
         let validation = Validation::new();
 
         let security = Arc::new(Security::new()?);
-        let state_service = Arc::new(StateService::new()?);
+        let state_service = Arc::new(StateService::new_with_session(session_state)?);
         let profile_service = Arc::new(ProfileService::new(security.clone())?);
         let project_service = Arc::new(ProjectService::new()?);
         let project_resolver = Arc::new(ProjectResolver::new(
@@ -331,6 +337,8 @@ impl App {
             runbook_service,
             workspace_service,
             runbook_manager,
+            state_service,
+            job_service,
         })
     }
 }

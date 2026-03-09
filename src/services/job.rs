@@ -310,4 +310,13 @@ impl JobService {
             "path": self.store.path(),
         })
     }
+
+    pub fn has_live_jobs(&self) -> bool {
+        self.list(self.max_jobs, None).iter().any(|job| {
+            matches!(
+                job.get("status").and_then(|value| value.as_str()),
+                Some("queued") | Some("running")
+            )
+        })
+    }
 }

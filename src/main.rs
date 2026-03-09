@@ -1,4 +1,4 @@
-#[tokio::main]
+#[tokio::main(flavor = "current_thread")]
 async fn main() {
     if let Err(err) = infra::mcp::server::run_stdio().await {
         eprintln!("infra: {}", err);

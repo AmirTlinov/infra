@@ -6,17 +6,27 @@ use std::sync::{Arc, RwLock};
 
 const PERSISTENT_NAMESPACE: &str = "state:persistent";
 
+pub type SessionState = Arc<RwLock<HashMap<String, Value>>>;
+
+pub fn new_session_state() -> SessionState {
+    Arc::new(RwLock::new(HashMap::new()))
+}
+
 #[derive(Clone)]
 pub struct StateService {
     store: StoreDb,
-    session: Arc<RwLock<HashMap<String, Value>>>,
+    session: SessionState,
 }
 
 impl StateService {
     pub fn new() -> Result<Self, ToolError> {
+        Self::new_with_session(new_session_state())
+    }
+
+    pub fn new_with_session(session: SessionState) -> Result<Self, ToolError> {
         let service = Self {
             store: StoreDb::new()?,
-            session: Arc::new(RwLock::new(HashMap::new())),
+            session,
         };
         service.import_legacy_once()?;
         Ok(service)
