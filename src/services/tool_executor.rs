@@ -152,13 +152,24 @@ impl ToolExecutor {
         cleaned
     }
 
+    fn strip_args_for_validation(&self, args: &Value) -> Value {
+        let mut cleaned = self.strip_args_for_handler(args);
+        if let Value::Object(map) = &mut cleaned {
+            map.remove("trace_id");
+            map.remove("span_id");
+            map.remove("parent_span_id");
+        }
+        cleaned
+    }
+
     fn validate_effective_args(
         &self,
         tool: &str,
         args: &Value,
         invoked_as: Option<&str>,
     ) -> Result<(), ToolError> {
-        validate_tool_args(tool, args).map_err(|err| {
+        let cleaned = self.strip_args_for_validation(args);
+        validate_tool_args(tool, &cleaned).map_err(|err| {
             let mut details = serde_json::Map::new();
             details.insert(
                 "stage".to_string(),

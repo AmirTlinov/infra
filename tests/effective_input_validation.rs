@@ -90,6 +90,46 @@ async fn alias_injected_fields_are_revalidated_after_merge() {
 }
 
 #[tokio::test]
+async fn server_injected_trace_fields_are_ignored_during_effective_validation() {
+    let _guard = ENV_LOCK.lock().await;
+
+    let prev_profiles = std::env::var("MCP_PROFILES_DIR").ok();
+    let tmp_dir = std::env::temp_dir().join(format!("infra-test-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&tmp_dir).expect("create temp dir");
+    std::env::set_var("MCP_PROFILES_DIR", &tmp_dir);
+
+    let logger = Logger::new("test");
+    let state_service = Arc::new(StateService::new().expect("state"));
+
+    let mut handlers: HashMap<String, Arc<dyn ToolHandler>> = HashMap::new();
+    handlers.insert("mcp_state".to_string(), Arc::new(DummyHandler));
+    let executor = ToolExecutor::new(logger, state_service, None, None, handlers, HashMap::new());
+
+    let result = executor
+        .execute(
+            "mcp_state",
+            serde_json::json!({
+                "action": "set",
+                "key": "k",
+                "value": 1,
+                "scope": "session",
+                "trace_id": "trace-1",
+                "span_id": "span-1",
+                "parent_span_id": "span-0"
+            }),
+        )
+        .await
+        .expect("server-injected tracing fields should not fail schema validation");
+
+    assert!(
+        result.is_object(),
+        "wrapped tool result should still be returned"
+    );
+
+    restore_env("MCP_PROFILES_DIR", prev_profiles);
+}
+
+#[tokio::test]
 async fn preset_args_are_rejected_as_compatibility_only() {
     let _guard = ENV_LOCK.lock().await;
 

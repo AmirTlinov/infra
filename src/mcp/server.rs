@@ -9,6 +9,7 @@ use crate::mcp::envelope::{
 };
 use crate::mcp::protocol::{JsonRpcRequest, JsonRpcResponse};
 use crate::mcp::{help, legend, prompts, resources};
+use crate::services::state::{new_session_state, SessionState};
 use crate::services::tool_executor::ToolCallMeta;
 use crate::utils::arg_aliases::normalize_args_aliases;
 use crate::utils::artifacts::{
@@ -19,17 +20,19 @@ use crate::utils::redact::redact_text;
 use serde_json::Value;
 use std::collections::HashSet;
 use std::io::{BufRead as _, ErrorKind};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 #[cfg(test)]
-use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncRead, BufReader};
 use tokio::io::{AsyncWrite, AsyncWriteExt, BufWriter};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, Mutex};
 
 const PROTOCOL_VERSION: &str = "2025-06-18";
 const SERVER_NAME: &str = "infra";
 const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
-const STDIO_IDLE_TIMEOUT_ENV: &str = "INFRA_STDIO_IDLE_TIMEOUT_MS";
+const STDIO_APP_IDLE_UNLOAD_ENV: &str = "INFRA_APP_IDLE_UNLOAD_MS";
+const LEGACY_STDIO_IDLE_TIMEOUT_ENV: &str = "INFRA_STDIO_IDLE_TIMEOUT_MS";
 
 fn core_tool_names() -> HashSet<String> {
     HashSet::from([
@@ -73,15 +76,22 @@ enum ReadLoopEvent {
     IdleTimeout,
 }
 
-fn resolve_stdio_idle_timeout_ms() -> Option<u64> {
-    match std::env::var(STDIO_IDLE_TIMEOUT_ENV) {
-        Ok(raw) => match raw.trim().parse::<u64>() {
-            Ok(0) => None,
-            Ok(value) => Some(value),
-            Err(_) => Some(IDLE_TIMEOUT_MS),
-        },
+fn parse_timeout_ms(raw: &str) -> Option<u64> {
+    match raw.trim().parse::<u64>() {
+        Ok(0) => None,
+        Ok(value) => Some(value),
         Err(_) => Some(IDLE_TIMEOUT_MS),
     }
+}
+
+fn resolve_stdio_idle_timeout_ms() -> Option<u64> {
+    if let Ok(raw) = std::env::var(STDIO_APP_IDLE_UNLOAD_ENV) {
+        return parse_timeout_ms(&raw);
+    }
+    if let Ok(raw) = std::env::var(LEGACY_STDIO_IDLE_TIMEOUT_ENV) {
+        return parse_timeout_ms(&raw);
+    }
+    Some(IDLE_TIMEOUT_MS)
 }
 
 #[cfg(test)]
@@ -90,7 +100,7 @@ async fn read_loop_event<R>(
     idle_timeout_ms: Option<u64>,
 ) -> Result<ReadLoopEvent, ToolError>
 where
-    R: tokio::io::AsyncRead + Unpin,
+    R: AsyncRead + Unpin,
 {
     let next_line = async {
         reader
@@ -473,13 +483,55 @@ fn format_legend_result_to_context(result: &Value) -> String {
 }
 
 pub struct McpServer {
-    app: Arc<App>,
+    app: Arc<Mutex<Option<Arc<App>>>>,
+    active_requests: Arc<AtomicUsize>,
+    // Session-scoped MCP state must outlive App unload/reload cycles so healthy
+    // stdio clients can pause without losing session memory.
+    session_state: SessionState,
 }
 
 impl McpServer {
     pub async fn new() -> Result<Self, ToolError> {
-        let app = App::initialize()?;
-        Ok(Self { app: Arc::new(app) })
+        Ok(Self {
+            app: Arc::new(Mutex::new(None)),
+            active_requests: Arc::new(AtomicUsize::new(0)),
+            session_state: new_session_state(),
+        })
+    }
+
+    async fn app(&self) -> Result<Arc<App>, ToolError> {
+        let mut guard = self.app.lock().await;
+        if let Some(app) = guard.as_ref() {
+            return Ok(app.clone());
+        }
+        let app = Arc::new(App::initialize_with_session(self.session_state.clone())?);
+        *guard = Some(app.clone());
+        Ok(app)
+    }
+
+    async fn unload_app_if_idle_safe(&self) -> bool {
+        if self.active_requests.load(Ordering::SeqCst) != 0 {
+            return false;
+        }
+        let loaded = {
+            let guard = self.app.lock().await;
+            guard.as_ref().cloned()
+        };
+        let Some(app) = loaded else {
+            return false;
+        };
+        if app.job_service.has_live_jobs() {
+            return false;
+        }
+
+        let mut guard = self.app.lock().await;
+        if let Some(current) = guard.as_ref() {
+            if Arc::ptr_eq(current, &app) && self.active_requests.load(Ordering::SeqCst) == 0 {
+                *guard = None;
+                return true;
+            }
+        }
+        false
     }
 
     async fn handle_initialize(&self) -> Value {
@@ -505,7 +557,11 @@ impl McpServer {
     }
 
     async fn handle_resources_read(&self, uri: &str) -> Result<Value, McpError> {
-        resources::read_resource(&self.app, uri)
+        let app = self
+            .app()
+            .await
+            .map_err(|err| McpError::new(ErrorCode::InvalidParams, err.message))?;
+        resources::read_resource(&app, uri)
             .await
             .map_err(|err| McpError::new(ErrorCode::InvalidParams, err.message))
     }
@@ -577,12 +633,13 @@ impl McpServer {
 
         let started_at = chrono::Utc::now().timestamp_millis();
         let payload = if name == "help" {
-            let result = help::build_help_payload(&self.app, &args);
-            self.app
-                .tool_executor
+            let call_args = args.clone();
+            let app = self.app().await.map_err(|err| map_tool_error(name, &err))?;
+            let result = help::build_help_payload(&app, &call_args);
+            app.tool_executor
                 .wrap_result(
                     name,
-                    &args,
+                    &call_args,
                     &result,
                     ToolCallMeta {
                         started_at,
@@ -595,12 +652,13 @@ impl McpServer {
                 .await
                 .map_err(|err| map_tool_error(name, &err))?
         } else if name == "legend" {
+            let call_args = args.clone();
+            let app = self.app().await.map_err(|err| map_tool_error(name, &err))?;
             let result = legend::build_legend_payload();
-            self.app
-                .tool_executor
+            app.tool_executor
                 .wrap_result(
                     name,
-                    &args,
+                    &call_args,
                     &result,
                     ToolCallMeta {
                         started_at,
@@ -613,7 +671,9 @@ impl McpServer {
                 .await
                 .map_err(|err| map_tool_error(name, &err))?
         } else {
-            self.app
+            self.app()
+                .await
+                .map_err(|err| map_tool_error(name, &err))?
                 .tool_executor
                 .execute(name, args.clone())
                 .await
@@ -758,7 +818,7 @@ impl McpServer {
         idle_timeout_ms: Option<u64>,
     ) -> Result<(), ToolError>
     where
-        R: tokio::io::AsyncRead + Unpin,
+        R: AsyncRead + Unpin,
         W: AsyncWrite + Unpin,
     {
         let mut reader = BufReader::new(reader).lines();
@@ -773,11 +833,12 @@ impl McpServer {
                 }
                 ReadLoopEvent::Eof => break,
                 ReadLoopEvent::IdleTimeout => {
-                    eprintln!(
-                        "infra: stdio idle timeout reached ({} ms), exiting",
-                        idle_timeout_ms.unwrap_or(0)
-                    );
-                    break;
+                    if idle_timeout_ms.unwrap_or(0) > 0 && self.unload_app_if_idle_safe().await {
+                        eprintln!(
+                            "infra: app idle timeout reached ({} ms), unloading runtime state",
+                            idle_timeout_ms.unwrap_or(0)
+                        );
+                    }
                 }
             }
         }
@@ -790,7 +851,7 @@ impl McpServer {
         mut receiver: mpsc::Receiver<Result<ReadLoopEvent, ToolError>>,
         writer: W,
         idle_timeout_ms: Option<u64>,
-    ) -> Result<bool, ToolError>
+    ) -> Result<(), ToolError>
     where
         W: AsyncWrite + Unpin,
     {
@@ -800,24 +861,41 @@ impl McpServer {
             match channel_read_loop_event(&mut receiver, idle_timeout_ms).await? {
                 ReadLoopEvent::Line(line) => {
                     if !self.process_jsonrpc_line(&mut writer, line).await? {
-                        return Ok(false);
+                        return Ok(());
                     }
                 }
                 ReadLoopEvent::Eof => break,
                 ReadLoopEvent::IdleTimeout => {
-                    eprintln!(
-                        "infra: stdio idle timeout reached ({} ms), exiting",
-                        idle_timeout_ms.unwrap_or(0)
-                    );
-                    return Ok(true);
+                    if idle_timeout_ms.unwrap_or(0) > 0 && self.unload_app_if_idle_safe().await {
+                        eprintln!(
+                            "infra: app idle timeout reached ({} ms), unloading runtime state",
+                            idle_timeout_ms.unwrap_or(0)
+                        );
+                    }
                 }
             }
         }
 
-        Ok(false)
+        Ok(())
     }
 
     async fn process_jsonrpc_line<W: AsyncWrite + Unpin>(
+        &self,
+        writer: &mut BufWriter<W>,
+        line: String,
+    ) -> Result<bool, ToolError> {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            return Ok(true);
+        }
+
+        self.active_requests.fetch_add(1, Ordering::SeqCst);
+        let result = self.process_jsonrpc_line_inner(writer, line).await;
+        self.active_requests.fetch_sub(1, Ordering::SeqCst);
+        result
+    }
+
+    async fn process_jsonrpc_line_inner<W: AsyncWrite + Unpin>(
         &self,
         writer: &mut BufWriter<W>,
         line: String,
@@ -966,13 +1044,8 @@ impl McpServer {
     pub async fn run_stdio(&self) -> Result<(), ToolError> {
         let stdin_events = spawn_stdio_reader_thread()?;
         let stdout = tokio::io::stdout();
-        let idle_timed_out = self
-            .run_with_stdio_receiver(stdin_events, stdout, resolve_stdio_idle_timeout_ms())
-            .await?;
-        if idle_timed_out {
-            std::process::exit(0);
-        }
-        Ok(())
+        self.run_with_stdio_receiver(stdin_events, stdout, resolve_stdio_idle_timeout_ms())
+            .await
     }
 }
 
@@ -985,12 +1058,13 @@ pub async fn run_stdio() -> Result<(), ToolError> {
 mod tests {
     use super::{
         is_graceful_stdio_disconnect, read_loop_event, resolve_stdio_idle_timeout_ms, McpServer,
-        ReadLoopEvent, SERVER_VERSION, STDIO_IDLE_TIMEOUT_ENV,
+        ReadLoopEvent, LEGACY_STDIO_IDLE_TIMEOUT_ENV, SERVER_VERSION, STDIO_APP_IDLE_UNLOAD_ENV,
     };
     use crate::constants::timeouts::IDLE_TIMEOUT_MS;
     use once_cell::sync::Lazy;
     use serde_json::json;
     use std::io::ErrorKind;
+    use std::sync::Arc;
     use std::time::Duration;
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
     use tokio::sync::Mutex;
@@ -1032,38 +1106,60 @@ mod tests {
     #[tokio::test]
     async fn stdio_idle_timeout_env_zero_disables_timeout() {
         let _guard = ENV_LOCK.lock().await;
-        let prev_timeout = std::env::var(STDIO_IDLE_TIMEOUT_ENV).ok();
-        std::env::set_var(STDIO_IDLE_TIMEOUT_ENV, "0");
+        let prev_timeout = std::env::var(STDIO_APP_IDLE_UNLOAD_ENV).ok();
+        let prev_legacy = std::env::var(LEGACY_STDIO_IDLE_TIMEOUT_ENV).ok();
+        std::env::set_var(STDIO_APP_IDLE_UNLOAD_ENV, "0");
+        std::env::remove_var(LEGACY_STDIO_IDLE_TIMEOUT_ENV);
         assert_eq!(resolve_stdio_idle_timeout_ms(), None);
-        restore_env(STDIO_IDLE_TIMEOUT_ENV, prev_timeout);
+        restore_env(STDIO_APP_IDLE_UNLOAD_ENV, prev_timeout);
+        restore_env(LEGACY_STDIO_IDLE_TIMEOUT_ENV, prev_legacy);
     }
 
     #[tokio::test]
     async fn invalid_stdio_idle_timeout_env_falls_back_to_safe_default() {
         let _guard = ENV_LOCK.lock().await;
-        let prev_timeout = std::env::var(STDIO_IDLE_TIMEOUT_ENV).ok();
-        std::env::set_var(STDIO_IDLE_TIMEOUT_ENV, "not-a-number");
+        let prev_timeout = std::env::var(STDIO_APP_IDLE_UNLOAD_ENV).ok();
+        let prev_legacy = std::env::var(LEGACY_STDIO_IDLE_TIMEOUT_ENV).ok();
+        std::env::set_var(STDIO_APP_IDLE_UNLOAD_ENV, "not-a-number");
+        std::env::remove_var(LEGACY_STDIO_IDLE_TIMEOUT_ENV);
         assert_eq!(resolve_stdio_idle_timeout_ms(), Some(IDLE_TIMEOUT_MS));
-        restore_env(STDIO_IDLE_TIMEOUT_ENV, prev_timeout);
+        restore_env(STDIO_APP_IDLE_UNLOAD_ENV, prev_timeout);
+        restore_env(LEGACY_STDIO_IDLE_TIMEOUT_ENV, prev_legacy);
     }
 
     #[tokio::test]
-    async fn stdio_session_finishes_active_request_then_self_terminates_on_idle() {
+    async fn legacy_stdio_idle_timeout_env_still_controls_runtime_unload() {
+        let _guard = ENV_LOCK.lock().await;
+        let prev_timeout = std::env::var(STDIO_APP_IDLE_UNLOAD_ENV).ok();
+        let prev_legacy = std::env::var(LEGACY_STDIO_IDLE_TIMEOUT_ENV).ok();
+        std::env::remove_var(STDIO_APP_IDLE_UNLOAD_ENV);
+        std::env::set_var(LEGACY_STDIO_IDLE_TIMEOUT_ENV, "25");
+        assert_eq!(resolve_stdio_idle_timeout_ms(), Some(25));
+        restore_env(STDIO_APP_IDLE_UNLOAD_ENV, prev_timeout);
+        restore_env(LEGACY_STDIO_IDLE_TIMEOUT_ENV, prev_legacy);
+    }
+
+    #[tokio::test]
+    async fn stdio_session_unloads_runtime_after_idle_and_keeps_transport_alive() {
         let _guard = ENV_LOCK.lock().await;
 
         let prev_profiles = std::env::var("MCP_PROFILES_DIR").ok();
-        let prev_timeout = std::env::var(STDIO_IDLE_TIMEOUT_ENV).ok();
+        let prev_timeout = std::env::var(STDIO_APP_IDLE_UNLOAD_ENV).ok();
+        let prev_legacy = std::env::var(LEGACY_STDIO_IDLE_TIMEOUT_ENV).ok();
         let tmp_dir =
             std::env::temp_dir().join(format!("infra-server-test-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&tmp_dir).expect("create temp dir");
         std::env::set_var("MCP_PROFILES_DIR", &tmp_dir);
-        std::env::set_var(STDIO_IDLE_TIMEOUT_ENV, "50");
+        std::env::set_var(STDIO_APP_IDLE_UNLOAD_ENV, "50");
+        std::env::remove_var(LEGACY_STDIO_IDLE_TIMEOUT_ENV);
 
-        let server = McpServer::new().await.expect("server");
+        let server = Arc::new(McpServer::new().await.expect("server"));
+        let _app = server.app().await.expect("app loaded");
         let (mut client_writer, server_reader) = tokio::io::duplex(8 * 1024);
         let (server_writer, client_reader) = tokio::io::duplex(8 * 1024);
-        let run = tokio::spawn(async move {
-            server
+        let server_for_run = server.clone();
+        let mut run = tokio::spawn(async move {
+            server_for_run
                 .run_with_io(
                     server_reader,
                     server_writer,
@@ -1072,37 +1168,234 @@ mod tests {
                 .await
         });
 
-        let initialize = serde_json::json!({
+        tokio::time::timeout(Duration::from_millis(500), async {
+            loop {
+                if server.app.lock().await.is_none() {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("app unloads after idle");
+
+        let help_call = json!({
             "jsonrpc": "2.0",
             "id": 1,
-            "method": "initialize",
-            "params": {}
+            "method": "tools/call",
+            "params": {
+                "name": "help",
+                "arguments": {}
+            }
         });
         client_writer
-            .write_all(format!("{}\n", initialize).as_bytes())
+            .write_all(format!("{}\n", help_call).as_bytes())
             .await
-            .expect("write initialize");
+            .expect("write help");
 
         let mut client_reader = BufReader::new(client_reader).lines();
         let response_line =
             tokio::time::timeout(Duration::from_millis(500), client_reader.next_line())
                 .await
-                .expect("initialize response before idle timeout")
-                .expect("read initialize response")
-                .expect("initialize response line");
+                .expect("help response after idle unload")
+                .expect("read help response")
+                .expect("help response line");
         let response: serde_json::Value =
-            serde_json::from_str(&response_line).expect("parse initialize response");
-        assert_eq!(response.get("id"), Some(&serde_json::json!(1)));
+            serde_json::from_str(&response_line).expect("parse help response");
+        assert_eq!(response.get("id"), Some(&json!(1)));
         assert!(response.get("result").is_some());
+        assert!(
+            server.app.lock().await.is_some(),
+            "help call should rehydrate app"
+        );
 
-        let run_result = tokio::time::timeout(Duration::from_millis(500), run)
+        drop(client_writer);
+        let run_result = tokio::time::timeout(Duration::from_millis(500), &mut run)
             .await
-            .expect("server exits after bounded idle")
+            .expect("server exits after eof")
             .expect("join run loop");
         assert!(run_result.is_ok());
 
         restore_env("MCP_PROFILES_DIR", prev_profiles);
-        restore_env(STDIO_IDLE_TIMEOUT_ENV, prev_timeout);
+        restore_env(STDIO_APP_IDLE_UNLOAD_ENV, prev_timeout);
+        restore_env(LEGACY_STDIO_IDLE_TIMEOUT_ENV, prev_legacy);
+        std::fs::remove_dir_all(&tmp_dir).ok();
+    }
+
+    #[tokio::test]
+    async fn stdio_session_preserves_session_state_across_idle_unload() {
+        let _guard = ENV_LOCK.lock().await;
+
+        let prev_profiles = std::env::var("MCP_PROFILES_DIR").ok();
+        let prev_timeout = std::env::var(STDIO_APP_IDLE_UNLOAD_ENV).ok();
+        let prev_legacy = std::env::var(LEGACY_STDIO_IDLE_TIMEOUT_ENV).ok();
+        let tmp_dir =
+            std::env::temp_dir().join(format!("infra-server-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&tmp_dir).expect("create temp dir");
+        std::env::set_var("MCP_PROFILES_DIR", &tmp_dir);
+        std::env::set_var(STDIO_APP_IDLE_UNLOAD_ENV, "50");
+        std::env::remove_var(LEGACY_STDIO_IDLE_TIMEOUT_ENV);
+
+        let server = Arc::new(McpServer::new().await.expect("server"));
+        let app = server.app().await.expect("app loaded");
+        app.state_service
+            .set("session.key", json!("value"), Some("session"))
+            .expect("session state");
+
+        let (mut client_writer, server_reader) = tokio::io::duplex(8 * 1024);
+        let (server_writer, client_reader) = tokio::io::duplex(8 * 1024);
+        let server_for_run = server.clone();
+        let mut run = tokio::spawn(async move {
+            server_for_run
+                .run_with_io(
+                    server_reader,
+                    server_writer,
+                    resolve_stdio_idle_timeout_ms(),
+                )
+                .await
+        });
+
+        tokio::time::timeout(Duration::from_millis(500), async {
+            loop {
+                if server.app.lock().await.is_none() {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("app unloads even with session state");
+        assert!(
+            server.app.lock().await.is_none(),
+            "idle session should unload the app even when session state exists"
+        );
+
+        let state_get = json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {
+                "name": "mcp_state",
+                "arguments": {
+                    "action": "get",
+                    "key": "session.key",
+                    "scope": "session",
+                }
+            }
+        });
+        client_writer
+            .write_all(format!("{}\n", state_get).as_bytes())
+            .await
+            .expect("write state get");
+
+        let mut client_reader = BufReader::new(client_reader).lines();
+        let response_line =
+            tokio::time::timeout(Duration::from_millis(500), client_reader.next_line())
+                .await
+                .expect("state get response after unload")
+                .expect("read state get response")
+                .expect("state get response line");
+        let response: serde_json::Value =
+            serde_json::from_str(&response_line).expect("parse state get response");
+        assert_eq!(response.get("id"), Some(&json!(1)));
+        assert_eq!(
+            response
+                .get("result")
+                .and_then(|v| v.get("structuredContent"))
+                .and_then(|v| v.get("result"))
+                .and_then(|v| v.get("value")),
+            Some(&json!("value")),
+            "session state should survive idle unload and rehydrate"
+        );
+        assert!(
+            server.app.lock().await.is_some(),
+            "request should rehydrate app"
+        );
+
+        drop(client_writer);
+        let run_result = tokio::time::timeout(Duration::from_millis(500), &mut run)
+            .await
+            .expect("server exits after eof")
+            .expect("join run loop");
+        assert!(run_result.is_ok());
+
+        restore_env("MCP_PROFILES_DIR", prev_profiles);
+        restore_env(STDIO_APP_IDLE_UNLOAD_ENV, prev_timeout);
+        restore_env(LEGACY_STDIO_IDLE_TIMEOUT_ENV, prev_legacy);
+        std::fs::remove_dir_all(&tmp_dir).ok();
+    }
+
+    #[tokio::test]
+    async fn stdio_session_keeps_runtime_loaded_while_live_jobs_exist() {
+        let _guard = ENV_LOCK.lock().await;
+
+        let prev_profiles = std::env::var("MCP_PROFILES_DIR").ok();
+        let prev_timeout = std::env::var(STDIO_APP_IDLE_UNLOAD_ENV).ok();
+        let prev_legacy = std::env::var(LEGACY_STDIO_IDLE_TIMEOUT_ENV).ok();
+        let tmp_dir =
+            std::env::temp_dir().join(format!("infra-server-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&tmp_dir).expect("create temp dir");
+        std::env::set_var("MCP_PROFILES_DIR", &tmp_dir);
+        std::env::set_var(STDIO_APP_IDLE_UNLOAD_ENV, "50");
+        std::env::remove_var(LEGACY_STDIO_IDLE_TIMEOUT_ENV);
+
+        let server = Arc::new(McpServer::new().await.expect("server"));
+        let app = server.app().await.expect("app loaded");
+        app.job_service
+            .upsert(json!({"job_id": "job-1", "status": "running"}))
+            .expect("running job");
+
+        let (client_writer, server_reader) = tokio::io::duplex(8 * 1024);
+        let (server_writer, _client_reader) = tokio::io::duplex(8 * 1024);
+        let server_for_run = server.clone();
+        let mut run = tokio::spawn(async move {
+            server_for_run
+                .run_with_io(
+                    server_reader,
+                    server_writer,
+                    resolve_stdio_idle_timeout_ms(),
+                )
+                .await
+        });
+
+        assert!(
+            tokio::time::timeout(Duration::from_millis(125), async {
+                loop {
+                    if server.app.lock().await.is_none() {
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+            })
+            .await
+            .is_err(),
+            "live jobs must pin the runtime instead of allowing idle unload"
+        );
+        assert_eq!(
+            server
+                .app()
+                .await
+                .expect("app still loaded")
+                .job_service
+                .get("job-1")
+                .and_then(|job| job
+                    .get("status")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string)),
+            Some("running".to_string()),
+            "running job metadata should remain available while the runtime stays loaded"
+        );
+
+        drop(client_writer);
+        let run_result = tokio::time::timeout(Duration::from_millis(500), &mut run)
+            .await
+            .expect("server exits after eof")
+            .expect("join run loop");
+        assert!(run_result.is_ok());
+
+        restore_env("MCP_PROFILES_DIR", prev_profiles);
+        restore_env(STDIO_APP_IDLE_UNLOAD_ENV, prev_timeout);
+        restore_env(LEGACY_STDIO_IDLE_TIMEOUT_ENV, prev_legacy);
         std::fs::remove_dir_all(&tmp_dir).ok();
     }
 
@@ -1111,18 +1404,22 @@ mod tests {
         let _guard = ENV_LOCK.lock().await;
 
         let prev_profiles = std::env::var("MCP_PROFILES_DIR").ok();
-        let prev_timeout = std::env::var(STDIO_IDLE_TIMEOUT_ENV).ok();
+        let prev_timeout = std::env::var(STDIO_APP_IDLE_UNLOAD_ENV).ok();
+        let prev_legacy = std::env::var(LEGACY_STDIO_IDLE_TIMEOUT_ENV).ok();
         let tmp_dir =
             std::env::temp_dir().join(format!("infra-server-test-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&tmp_dir).expect("create temp dir");
         std::env::set_var("MCP_PROFILES_DIR", &tmp_dir);
-        std::env::set_var(STDIO_IDLE_TIMEOUT_ENV, "0");
+        std::env::set_var(STDIO_APP_IDLE_UNLOAD_ENV, "0");
+        std::env::remove_var(LEGACY_STDIO_IDLE_TIMEOUT_ENV);
 
-        let server = McpServer::new().await.expect("server");
-        let (mut client_writer, server_reader) = tokio::io::duplex(8 * 1024);
-        let (server_writer, client_reader) = tokio::io::duplex(8 * 1024);
+        let server = Arc::new(McpServer::new().await.expect("server"));
+        let _app = server.app().await.expect("app loaded");
+        let (client_writer, server_reader) = tokio::io::duplex(8 * 1024);
+        let (server_writer, _client_reader) = tokio::io::duplex(8 * 1024);
+        let server_for_run = server.clone();
         let mut run = tokio::spawn(async move {
-            server
+            server_for_run
                 .run_with_io(
                     server_reader,
                     server_writer,
@@ -1131,45 +1428,28 @@ mod tests {
                 .await
         });
 
-        let initialize = serde_json::json!({
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "initialize",
-            "params": {}
-        });
-        client_writer
-            .write_all(format!("{}\n", initialize).as_bytes())
-            .await
-            .expect("write initialize");
-
-        let mut client_reader = BufReader::new(client_reader).lines();
-        let response_line =
-            tokio::time::timeout(Duration::from_millis(500), client_reader.next_line())
-                .await
-                .expect("initialize response before idle timeout")
-                .expect("read initialize response")
-                .expect("initialize response line");
-        let response: serde_json::Value =
-            serde_json::from_str(&response_line).expect("parse initialize response");
-        assert_eq!(response.get("id"), Some(&serde_json::json!(1)));
-        assert!(response.get("result").is_some());
-
+        tokio::time::sleep(Duration::from_millis(125)).await;
+        assert!(
+            server.app.lock().await.is_some(),
+            "timeout=0 keeps runtime warm"
+        );
         assert!(
             tokio::time::timeout(Duration::from_millis(125), &mut run)
                 .await
                 .is_err(),
-            "server should remain alive while the leaked pipe stays open when idle timeout is disabled"
+            "server should remain alive while the pipe stays open when timeout is disabled"
         );
 
         drop(client_writer);
-        let run_result = tokio::time::timeout(Duration::from_millis(500), run)
+        let run_result = tokio::time::timeout(Duration::from_millis(500), &mut run)
             .await
             .expect("server exits after eof")
             .expect("join run loop");
         assert!(run_result.is_ok());
 
         restore_env("MCP_PROFILES_DIR", prev_profiles);
-        restore_env(STDIO_IDLE_TIMEOUT_ENV, prev_timeout);
+        restore_env(STDIO_APP_IDLE_UNLOAD_ENV, prev_timeout);
+        restore_env(LEGACY_STDIO_IDLE_TIMEOUT_ENV, prev_legacy);
         std::fs::remove_dir_all(&tmp_dir).ok();
     }
 

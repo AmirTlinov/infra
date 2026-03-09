@@ -32,10 +32,10 @@ Infra also bounds leaked stdio sessions by default:
 
 | Lifecycle guard | Env var | Default |
 |-----------------|---------|---------|
-| Auto-exit idle stdio MCP server | `INFRA_STDIO_IDLE_TIMEOUT_MS` | `30000` ms |
+| Unload idle runtime state while a healthy client stays connected | `INFRA_APP_IDLE_UNLOAD_MS` | `30000` ms |
 
-Set `INFRA_STDIO_IDLE_TIMEOUT_MS=0` to disable the idle self-shutdown, but the default is recommended when many CLI sessions may otherwise leave orphaned MCP child processes behind.
-The idle timer only applies while Infra is waiting for the next stdio JSON-RPC line; an in-flight request/tool call is allowed to finish normally before the process exits.
+By default, Infra keeps the client-facing stdio transport alive and only unloads the heavy in-process runtime after `INFRA_APP_IDLE_UNLOAD_MS` of inactivity. Session-scoped MCP state stays attached to the stdio session, so a healthy client can pause, resume on the same transport, and keep its per-session state without paying the full warm-runtime memory cost the whole time. Live queued/running jobs pin the runtime until they finish or are canceled, so the unload boundary only applies to truly idle sessions. `INFRA_STDIO_IDLE_TIMEOUT_MS` remains as a deprecated compatibility fallback for the same unload timeout.
+The unload timer only applies while Infra is waiting for the next JSON-RPC line; an in-flight request/tool call is allowed to finish normally before the runtime is released.
 
 ## Quick demo (30 seconds)
 
@@ -543,13 +543,13 @@ Run it:
 No — unless you explicitly set `INFRA_UNSAFE_LOCAL=1`. By default, local exec and filesystem access are disabled.
 
 **Does Infra phone home or send telemetry?**  
-No. Infra is fully local, stdio-only. No network calls except the ones you configure (SSH, HTTP, Postgres targets).
+No. Infra is fully local and stdio-only. No external network calls happen except the ones you configure (SSH, HTTP, Postgres targets).
 
 **What if a command hangs or takes too long?**  
 Use `timeout_ms` on any tool call. For long-running tasks, use the Jobs API — async execution with status, logs, and cancel.
 
 **What if multiple CLI sessions leak idle `infra` processes?**  
-By default, an idle stdio server exits after `INFRA_STDIO_IDLE_TIMEOUT_MS` (30 seconds). This bounds leaked child-process buildup when a client forgets to reap old MCP sessions. Set the env var to `0` only if you intentionally need a long-lived pinned stdio server.
+Healthy sessions keep their stdio transport alive while the heavy runtime unloads after `INFRA_APP_IDLE_UNLOAD_MS`. Session-scoped state survives that unload boundary inside the same stdio session, so real clients can pause and continue on the same transport without hitting `Transport closed` or losing their session memory. If queued/running jobs still exist, Infra keeps the runtime loaded and skips the idle unload until that work is no longer live, while leaked idle sessions without live work stop carrying the full in-process app.
 
 **How do I know what the agent actually did?**  
 Every action creates an artifact with full audit trail. Use `mcp_artifacts { action: "list" }` to browse, or check the artifacts directory.
