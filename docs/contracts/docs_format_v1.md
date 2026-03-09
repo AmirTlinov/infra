@@ -13,7 +13,8 @@ Define [DOC_FORMAT]: a deterministic documentation shape that humans and agents 
 ## Interface
 Rules:
 - Every Markdown doc (except repo-root `AGENTS.md` and repo-root `README.md`) MUST follow [DOC_FORMAT].
-- The first non-empty line MUST be `[LEGEND]`.
+- For normal docs, the first non-empty line MUST be `[LEGEND]`.
+- Repo-local `SKILL.md` files under `*/skills/*/` MAY prepend a YAML frontmatter block before `[LEGEND]`, but the first non-empty line after that frontmatter MUST be `[LEGEND]`.
 - A document MUST include exactly one content header: `[CONTENT]`.
 
 Token rules:
@@ -35,4 +36,17 @@ TERM = A locally-defined term for this document.
 
 [CONTENT]
 This uses [TERM] without repeating the meaning.
+```
+
+```md
+---
+name: sample-skill
+description: Minimal metadata for Codex skill loading.
+---
+
+[LEGEND]
+TERM = A locally-defined term for this skill document.
+
+[CONTENT]
+This skill still follows the same context-doc structure after frontmatter.
 ```

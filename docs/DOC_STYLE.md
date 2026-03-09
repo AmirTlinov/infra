@@ -7,6 +7,7 @@ Doc format (mandatory for every [CONTEXT_DOC]):
 - Every other `.md` MUST be a context doc:
   - First non-empty line is `[LEGEND]`.
   - Then a `[CONTENT]` block.
+- Repo-local `SKILL.md` files under `*/skills/*/` may prepend a minimal YAML frontmatter block (`name`, `description`) before `[LEGEND]`; after the frontmatter, the same context-doc rules still apply.
 
 Token rules:
 - Define shared meanings in `LEGEND.md` as `TOKEN = Meaning`.
