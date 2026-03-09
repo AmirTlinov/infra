@@ -49,12 +49,34 @@ def _strip_inline_code(text: str) -> str:
     return "".join(out)
 
 
-def _parse_blocks(md: str) -> DocBlocks:
+def _allows_yaml_frontmatter(path: Path, root: Path) -> bool:
+    try:
+        rel = path.relative_to(root)
+    except ValueError:
+        return False
+    return rel.name == "SKILL.md" and "skills" in rel.parts
+
+
+def _strip_optional_yaml_frontmatter(md: str, allow_frontmatter: bool) -> list[str]:
     lines = md.splitlines()
-    # Skip leading empty lines.
     i = 0
     while i < len(lines) and not lines[i].strip():
         i += 1
+    if allow_frontmatter and i < len(lines) and lines[i].strip() == "---":
+        i += 1
+        while i < len(lines) and lines[i].strip() != "---":
+            i += 1
+        if i >= len(lines):
+            raise ValueError("unterminated YAML frontmatter")
+        i += 1
+        while i < len(lines) and not lines[i].strip():
+            i += 1
+    return lines[i:]
+
+
+def _parse_blocks(md: str, *, allow_frontmatter: bool = False) -> DocBlocks:
+    lines = _strip_optional_yaml_frontmatter(md, allow_frontmatter)
+    i = 0
     if i >= len(lines) or lines[i].strip() != "[LEGEND]":
         raise ValueError("first non-empty line must be [LEGEND]")
 
@@ -265,7 +287,10 @@ def run_docs_gate(root: Path, strict: bool) -> int:
             continue
         rel = path.relative_to(root)
         try:
-            blocks = _parse_blocks(path.read_text(encoding="utf-8"))
+            blocks = _parse_blocks(
+                path.read_text(encoding="utf-8"),
+                allow_frontmatter=_allows_yaml_frontmatter(path, root),
+            )
         except Exception as e:
             errors.append(f"{rel}: {e}")
             continue

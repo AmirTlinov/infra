@@ -34,11 +34,26 @@ def _strip_inline_code(text: str) -> str:
     return "".join(out)
 
 
-def _parse_blocks(md: str) -> DocBlocks:
+def _strip_optional_yaml_frontmatter(md: str, allow_frontmatter: bool = False) -> list[str]:
     lines = md.splitlines()
     i = 0
     while i < len(lines) and not lines[i].strip():
         i += 1
+    if allow_frontmatter and i < len(lines) and lines[i].strip() == "---":
+        i += 1
+        while i < len(lines) and lines[i].strip() != "---":
+            i += 1
+        if i >= len(lines):
+            raise ValueError("unterminated YAML frontmatter")
+        i += 1
+        while i < len(lines) and not lines[i].strip():
+            i += 1
+    return lines[i:]
+
+
+def _parse_blocks(md: str, *, allow_frontmatter: bool = False) -> DocBlocks:
+    lines = _strip_optional_yaml_frontmatter(md, allow_frontmatter)
+    i = 0
     if i >= len(lines) or lines[i].strip() != "[LEGEND]":
         raise ValueError("first non-empty line must be [LEGEND]")
 

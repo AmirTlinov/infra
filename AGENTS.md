@@ -11,6 +11,7 @@ Doc standard:
 - Every other `.md` doc MUST be written in the context format:
   - A `[LEGEND]` block (definitions)
   - A `[CONTENT]` block (uses definitions)
+- Repo-local `SKILL.md` files under `*/skills/*/` may prepend a minimal YAML frontmatter block (`name`, `description`) before `[LEGEND]`.
 
 Change protocol (contracts-first):
 1) Update contracts/interfaces first.
