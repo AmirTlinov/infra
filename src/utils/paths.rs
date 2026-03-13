@@ -111,7 +111,7 @@ pub fn resolve_default_runbooks_path() -> Option<PathBuf> {
             return Some(candidate.clone());
         }
     }
-    candidates.into_iter().next()
+    None
 }
 
 pub fn resolve_capabilities_path() -> PathBuf {
@@ -137,7 +137,7 @@ pub fn resolve_default_capabilities_path() -> Option<PathBuf> {
             return Some(candidate.clone());
         }
     }
-    candidates.into_iter().next()
+    None
 }
 
 pub fn resolve_context_path() -> PathBuf {

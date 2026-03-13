@@ -75,6 +75,8 @@ export MCP_PROFILES_DIR="$PWD/.infra"
 
 Infra will use this directory for project-local state such as runbooks, capabilities, and the SQLite store.
 
+Infra also carries bundled baseline runbooks and capabilities inside the binary. Files in your project profile directory extend or override those bundled defaults.
+
 ### 3. Add Infra to your MCP client
 
 Example config shape:
@@ -86,7 +88,8 @@ Example config shape:
       "command": "/absolute/path/to/infra/target/release/infra",
       "args": [],
       "env": {
-        "MCP_PROFILES_DIR": "/absolute/path/to/your/project/.infra"
+        "MCP_PROFILES_DIR": "/absolute/path/to/your/project/.infra",
+        "INFRA_TOOL_TIER": "expert"
       }
     }
   }
@@ -94,6 +97,11 @@ Example config shape:
 ```
 
 > Adjust the JSON shape to match your client. The important parts are the `command` and `MCP_PROFILES_DIR`.
+> Set `INFRA_TOOL_TIER=expert` when you want clients that rely on `tools/list` to see the broader SSH / API / Postgres / runbook / artifact surface instead of the compact core tier.
+
+Infra now bundles its default `runbooks.json` and `capabilities.json` into the binary, so the installed release binary still has a working manifest-backed baseline even when the client launches it from a non-repo working directory. If you create a project-local `.infra` directory, any `runbooks.json` / `capabilities.json` you place there still override the bundled defaults.
+
+The bundled `repo.snapshot` baseline is read-only and repo-safe: it uses the repo adapter rather than unsafe local shell, so it still works with `INFRA_UNSAFE_LOCAL` left off.
 
 ### 4. Sanity check
 

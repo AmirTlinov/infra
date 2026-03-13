@@ -1,5 +1,6 @@
 pub mod arg_aliases;
 pub mod artifacts;
+pub mod bundled_manifests;
 pub mod data_path;
 pub mod effects;
 pub mod feature_flags;

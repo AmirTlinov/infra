@@ -1,4 +1,5 @@
 use crate::errors::ToolError;
+use crate::utils::bundled_manifests::{bundled_runbooks_json, BUNDLED_RUNBOOKS_MANIFEST_URI};
 use crate::utils::effects::resolve_effects;
 use crate::utils::listing::ListFilters;
 use crate::utils::paths::{resolve_default_runbooks_path, resolve_runbooks_path};
@@ -9,6 +10,7 @@ use std::path::{Path, PathBuf};
 
 const RUNBOOK_SOURCE: &str = "manifest";
 const FILE_BACKED_MANIFEST_SOURCE: &str = "file_backed_manifest";
+const BUNDLED_MANIFEST_SOURCE: &str = "bundled_manifest";
 
 #[derive(Clone)]
 pub struct RunbookService {
@@ -31,11 +33,18 @@ impl RunbookService {
     fn read_runbooks_map(path: &Path, source: &str) -> Result<HashMap<String, Value>, ToolError> {
         let raw = std::fs::read_to_string(path)
             .map_err(|err| ToolError::internal(format!("Failed to load runbooks: {}", err)))?;
-        let parsed: Value = serde_json::from_str(&raw)
+        Self::read_runbooks_map_from_str(&raw, source, path.to_string_lossy().as_ref())
+    }
+
+    fn read_runbooks_map_from_str(
+        raw: &str,
+        source: &str,
+        manifest_path: &str,
+    ) -> Result<HashMap<String, Value>, ToolError> {
+        let parsed: Value = serde_json::from_str(raw)
             .map_err(|err| ToolError::internal(format!("Failed to parse runbooks: {}", err)))?;
         let manifest_version = parsed.get("version").cloned();
         let manifest_sha256 = format!("{:x}", Sha256::digest(raw.as_bytes()));
-        let manifest_path = path.to_string_lossy().to_string();
         let entries = parsed.get("runbooks").cloned().unwrap_or_else(|| {
             parsed
                 .as_object()
@@ -56,7 +65,7 @@ impl RunbookService {
             Self::validate_runbook(runbook).map_err(|err| {
                 ToolError::invalid_params(format!(
                     "Runbook manifest '{}' has invalid entry '{}': {}",
-                    path.display(),
+                    manifest_path,
                     name,
                     err.message
                 ))
@@ -75,7 +84,7 @@ impl RunbookService {
                         runbook,
                         &name,
                         source,
-                        &manifest_path,
+                        manifest_path,
                         manifest_version.as_ref(),
                         &manifest_sha256,
                     ),
@@ -84,21 +93,34 @@ impl RunbookService {
             .collect())
     }
 
+    fn merge_bundled_manifest(
+        merged: &mut HashMap<String, (Value, String)>,
+    ) -> Result<(), ToolError> {
+        for (name, runbook) in Self::read_runbooks_map_from_str(
+            bundled_runbooks_json(),
+            BUNDLED_MANIFEST_SOURCE,
+            BUNDLED_RUNBOOKS_MANIFEST_URI,
+        )? {
+            merged.insert(name, (runbook, BUNDLED_MANIFEST_SOURCE.to_string()));
+        }
+        Ok(())
+    }
+
     fn merge_manifest(
         merged: &mut HashMap<String, (Value, String)>,
         path: Option<&Path>,
         source: &str,
-    ) -> Result<(), ToolError> {
+    ) -> Result<bool, ToolError> {
         let Some(path) = path else {
-            return Ok(());
+            return Ok(false);
         };
         if !path.exists() {
-            return Ok(());
+            return Ok(false);
         }
         for (name, runbook) in Self::read_runbooks_map(path, source)? {
             merged.insert(name, (runbook, source.to_string()));
         }
-        Ok(())
+        Ok(true)
     }
 
     fn manifest_runbooks(&self) -> Result<HashMap<String, (Value, String)>, ToolError> {
@@ -108,11 +130,17 @@ impl RunbookService {
         let same_manifest = default_path == project_path;
 
         if same_manifest {
-            Self::merge_manifest(&mut merged, project_path, "manifest")?;
+            let loaded_manifest = Self::merge_manifest(&mut merged, project_path, "manifest")?;
+            if !loaded_manifest {
+                Self::merge_bundled_manifest(&mut merged)?;
+            }
             return Ok(merged);
         }
 
-        Self::merge_manifest(&mut merged, default_path, "default_manifest")?;
+        let loaded_default = Self::merge_manifest(&mut merged, default_path, "default_manifest")?;
+        if !loaded_default {
+            Self::merge_bundled_manifest(&mut merged)?;
+        }
         Self::merge_manifest(&mut merged, project_path, "manifest")?;
         Ok(merged)
     }
@@ -280,6 +308,7 @@ fn inject_manifest_metadata(
         "manifest_source".to_string(),
         Value::String(match source {
             "manifest" | "default_manifest" => FILE_BACKED_MANIFEST_SOURCE.to_string(),
+            BUNDLED_MANIFEST_SOURCE => BUNDLED_MANIFEST_SOURCE.to_string(),
             other => other.to_string(),
         }),
     );

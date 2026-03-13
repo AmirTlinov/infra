@@ -2323,62 +2323,62 @@
     ]
   },
   "repo.snapshot": {
-    "description": "Fast repository context: root, branch, status, recent commits, diffstat.",
+    "description": "Fast repository context through repo-safe git reads: root, branch, status, recent commits, diffstat.",
     "tags": ["repo", "git", "read"],
     "inputs": ["repo_path"],
     "steps": [
       {
         "id": "root",
-        "tool": "mcp_local",
+        "tool": "mcp_repo",
         "args": {
           "action": "exec",
           "command": "git",
           "args": ["rev-parse", "--show-toplevel"],
-          "cwd": "{{ ?input.repo_path }}",
+          "repo_root": "{{ input.repo_path }}",
           "inline": true
         }
       },
       {
         "id": "branch",
-        "tool": "mcp_local",
+        "tool": "mcp_repo",
         "args": {
           "action": "exec",
           "command": "git",
           "args": ["branch", "--show-current"],
-          "cwd": "{{ steps.root.stdout }}",
+          "repo_root": "{{ input.repo_path }}",
           "inline": true
         }
       },
       {
         "id": "status",
-        "tool": "mcp_local",
+        "tool": "mcp_repo",
         "args": {
           "action": "exec",
           "command": "git",
           "args": ["status", "--short"],
-          "cwd": "{{ steps.root.stdout }}",
+          "repo_root": "{{ input.repo_path }}",
           "inline": true
         }
       },
       {
         "id": "diffstat",
-        "tool": "mcp_local",
+        "tool": "mcp_repo",
         "args": {
           "action": "exec",
           "command": "git",
           "args": ["diff", "--stat"],
-          "cwd": "{{ steps.root.stdout }}",
+          "repo_root": "{{ input.repo_path }}",
           "inline": true
         }
       },
       {
         "id": "recent",
-        "tool": "mcp_local",
+        "tool": "mcp_repo",
         "args": {
           "action": "exec",
           "command": "git",
           "args": ["log", "-5", "--oneline"],
-          "cwd": "{{ steps.root.stdout }}",
+          "repo_root": "{{ input.repo_path }}",
           "inline": true
         }
       }

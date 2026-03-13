@@ -1,5 +1,8 @@
 use crate::errors::ToolError;
 use crate::services::security::Security;
+use crate::utils::bundled_manifests::{
+    bundled_capabilities_json, BUNDLED_CAPABILITIES_MANIFEST_URI,
+};
 use crate::utils::paths::{resolve_capabilities_path, resolve_default_capabilities_path};
 use crate::utils::when_matcher::matches_when;
 use serde_json::Value;
@@ -11,6 +14,7 @@ use std::sync::Arc;
 
 const CAPABILITY_SOURCE: &str = "manifest";
 const FILE_BACKED_MANIFEST_SOURCE: &str = "file_backed_manifest";
+const BUNDLED_MANIFEST_SOURCE: &str = "bundled_manifest";
 const UNCONFIGURED_MANIFEST_SOURCE: &str = "unconfigured_manifest";
 
 #[derive(Clone)]
@@ -343,13 +347,23 @@ fn load_capability_manifest(
     let same_manifest = default_path == manifest_path;
 
     let primary = if same_manifest {
-        merge_manifest(&mut merged, manifest_path, "manifest")?
+        let manifest_meta = merge_manifest(&mut merged, manifest_path, "manifest")?;
+        let bundled_meta = if manifest_meta.is_none() {
+            merge_bundled_manifest(&mut merged)?
+        } else {
+            None
+        };
+        manifest_meta.or(bundled_meta)
     } else {
         let default_meta = merge_manifest(&mut merged, default_path, "default_manifest")?;
+        let bundled_meta = if default_meta.is_none() {
+            merge_bundled_manifest(&mut merged)?
+        } else {
+            None
+        };
         let manifest_meta = merge_manifest(&mut merged, manifest_path, "manifest")?;
-        manifest_meta.or(default_meta)
+        manifest_meta.or(default_meta).or(bundled_meta)
     };
-    let loaded_manifest = primary.is_some();
 
     let (path, version, sha256) = if let Some(meta) = primary.as_ref() {
         (
@@ -369,11 +383,10 @@ fn load_capability_manifest(
 
     Ok(CapabilityManifest {
         path,
-        source: if loaded_manifest {
-            FILE_BACKED_MANIFEST_SOURCE.to_string()
-        } else {
-            UNCONFIGURED_MANIFEST_SOURCE.to_string()
-        },
+        source: primary
+            .as_ref()
+            .map(|meta| meta.source.clone())
+            .unwrap_or_else(|| UNCONFIGURED_MANIFEST_SOURCE.to_string()),
         version,
         sha256,
         capabilities: merged,
@@ -383,6 +396,7 @@ fn load_capability_manifest(
 #[derive(Clone)]
 struct ManifestInfo {
     path: PathBuf,
+    source: String,
     version: Option<Value>,
     sha256: String,
 }
@@ -405,17 +419,38 @@ fn merge_manifest(
     Ok(Some(info))
 }
 
+fn merge_bundled_manifest(
+    merged: &mut HashMap<String, Value>,
+) -> Result<Option<ManifestInfo>, ToolError> {
+    let (capabilities, info) = read_capabilities_map_from_str(
+        bundled_capabilities_json(),
+        BUNDLED_MANIFEST_SOURCE,
+        BUNDLED_CAPABILITIES_MANIFEST_URI,
+    )?;
+    for (name, capability) in capabilities {
+        merged.insert(name, capability);
+    }
+    Ok(Some(info))
+}
+
 fn read_capabilities_map(
     path: &Path,
     source: &str,
 ) -> Result<(HashMap<String, Value>, ManifestInfo), ToolError> {
     let raw = std::fs::read_to_string(path)
         .map_err(|err| ToolError::internal(format!("Failed to read capabilities: {}", err)))?;
-    let parsed: Value = serde_json::from_str(&raw)
+    read_capabilities_map_from_str(&raw, source, path.to_string_lossy().as_ref())
+}
+
+fn read_capabilities_map_from_str(
+    raw: &str,
+    source: &str,
+    manifest_path: &str,
+) -> Result<(HashMap<String, Value>, ManifestInfo), ToolError> {
+    let parsed: Value = serde_json::from_str(raw)
         .map_err(|err| ToolError::internal(format!("Failed to parse capabilities: {}", err)))?;
     let manifest_version = parsed.get("version").cloned();
     let manifest_sha256 = format!("{:x}", Sha256::digest(raw.as_bytes()));
-    let manifest_path = path.to_string_lossy().to_string();
     let entries = parsed.get("capabilities").cloned().unwrap_or_else(|| {
         parsed
             .as_object()
@@ -442,7 +477,7 @@ fn read_capabilities_map(
                             entry,
                             &name,
                             source,
-                            &manifest_path,
+                            manifest_path,
                             manifest_version.as_ref(),
                             &manifest_sha256,
                         ),
@@ -458,7 +493,7 @@ fn read_capabilities_map(
                         entry,
                         &name,
                         source,
-                        &manifest_path,
+                        manifest_path,
                         manifest_version.as_ref(),
                         &manifest_sha256,
                     ),
@@ -471,7 +506,12 @@ fn read_capabilities_map(
     Ok((
         capabilities,
         ManifestInfo {
-            path: path.to_path_buf(),
+            path: PathBuf::from(manifest_path),
+            source: match source {
+                "manifest" | "default_manifest" => FILE_BACKED_MANIFEST_SOURCE.to_string(),
+                BUNDLED_MANIFEST_SOURCE => BUNDLED_MANIFEST_SOURCE.to_string(),
+                other => other.to_string(),
+            },
             version: manifest_version,
             sha256: manifest_sha256,
         },
@@ -493,6 +533,7 @@ fn inject_manifest_metadata(
         "manifest_source".to_string(),
         Value::String(match source {
             "manifest" | "default_manifest" => FILE_BACKED_MANIFEST_SOURCE.to_string(),
+            BUNDLED_MANIFEST_SOURCE => BUNDLED_MANIFEST_SOURCE.to_string(),
             other => other.to_string(),
         }),
     );

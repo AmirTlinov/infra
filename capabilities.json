@@ -382,7 +382,7 @@
     },
     "repo.snapshot": {
       "intent": "repo.snapshot",
-      "description": "Fast repository context: root, branch, status, recent commits, diffstat.",
+      "description": "Fast repository context through repo-safe git reads: root, branch, status, recent commits, diffstat.",
       "runbook": "repo.snapshot",
       "tags": ["repo", "git", "read"],
       "inputs": {
