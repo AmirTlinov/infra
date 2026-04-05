@@ -1,6 +1,6 @@
-pub mod arg_aliases;
 pub mod artifacts;
 pub mod bundled_manifests;
+pub mod checks;
 pub mod data_path;
 pub mod effects;
 pub mod feature_flags;
@@ -8,6 +8,7 @@ pub mod fs_atomic;
 pub mod listing;
 pub mod manifests;
 pub mod merge;
+pub mod operation_view;
 pub mod output;
 pub mod paths;
 pub mod redact;

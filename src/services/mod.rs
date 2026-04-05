@@ -4,6 +4,7 @@ pub mod cache;
 pub mod capability;
 pub mod context;
 pub mod context_session;
+pub mod description;
 pub mod evidence;
 pub mod job;
 pub mod logger;

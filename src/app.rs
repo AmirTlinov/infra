@@ -1,12 +1,12 @@
 use crate::errors::ToolError;
 use crate::managers;
-use crate::mcp::catalog::discovery_tool_catalog;
 use crate::services::alias::AliasService;
 use crate::services::audit::AuditService;
 use crate::services::cache::CacheService;
 use crate::services::capability::CapabilityService;
 use crate::services::context::ContextService;
 use crate::services::context_session::ContextSessionService;
+use crate::services::description::DescriptionService;
 use crate::services::evidence::EvidenceService;
 use crate::services::job::JobService;
 use crate::services::logger::Logger;
@@ -24,6 +24,8 @@ use crate::services::tool_executor::{ToolExecutor, ToolHandler};
 use crate::services::validation::Validation;
 use crate::services::vault_client::VaultClient;
 use crate::services::workspace::WorkspaceService;
+use crate::tooling::catalog::tool_contract_catalog;
+use crate::tooling::names::builtin_tool_alias_map_owned;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -38,6 +40,14 @@ pub struct App {
     pub runbook_manager: Arc<managers::runbook::RunbookManager>,
     pub state_service: Arc<StateService>,
     pub job_service: Arc<JobService>,
+    pub project_manager: Arc<managers::project::ProjectManager>,
+    pub target_manager: Arc<managers::target::TargetManager>,
+    pub profile_manager: Arc<managers::profile::ProfileManager>,
+    pub capability_manager: Arc<managers::capability::CapabilityManager>,
+    pub policy_manager: Arc<managers::policy::PolicyManager>,
+    pub operation_manager: Arc<managers::operation::OperationManager>,
+    pub receipt_manager: Arc<managers::receipt::ReceiptManager>,
+    pub job_manager: Arc<managers::jobs::JobManager>,
 }
 
 impl App {
@@ -45,12 +55,8 @@ impl App {
         handlers: &HashMap<String, Arc<dyn ToolHandler>>,
         alias_map: &HashMap<String, String>,
     ) -> Result<(), ToolError> {
-        let builtins = ["help", "legend"];
         let mut missing = Vec::new();
-        for tool in discovery_tool_catalog().iter() {
-            if builtins.contains(&tool.name.as_str()) {
-                continue;
-            }
+        for tool in tool_contract_catalog().iter() {
             if handlers.contains_key(&tool.name) {
                 continue;
             }
@@ -64,7 +70,7 @@ impl App {
         }
         missing.sort();
         Err(ToolError::internal("Tool wiring is incomplete").with_hint(
-            "This is a server wiring bug: every tool in tool_catalog.json must have a handler or an alias_map entry."
+            "This is an app wiring bug: every canonical tool contract must have a handler or an alias entry."
                 .to_string(),
         )
         .with_details(serde_json::json!({ "missing_tools": missing })))
@@ -169,6 +175,8 @@ impl App {
             validation.clone(),
             project_service.clone(),
             state_service.clone(),
+            Some(profile_service.clone()),
+            Some(policy_service.clone()),
         ));
         let policy_manager = Arc::new(managers::policy::PolicyManager::new(
             logger.clone(),
@@ -260,6 +268,7 @@ impl App {
             logger.clone(),
             validation.clone(),
             capability_service.clone(),
+            runbook_service.clone(),
             Some(context_service.clone()),
             intent_manager.clone(),
             operation_service.clone(),
@@ -269,6 +278,7 @@ impl App {
             logger.clone(),
             validation.clone(),
             operation_service.clone(),
+            job_service.clone(),
         ));
         let runbook_manager = Arc::new(managers::runbook::RunbookManager::new(
             logger.clone(),
@@ -285,34 +295,34 @@ impl App {
         ));
 
         let mut handlers: HashMap<String, Arc<dyn ToolHandler>> = HashMap::new();
-        handlers.insert("mcp_alias".to_string(), alias_manager);
-        handlers.insert("mcp_preset".to_string(), preset_manager);
-        handlers.insert("mcp_state".to_string(), state_manager);
-        handlers.insert("mcp_audit".to_string(), audit_manager);
-        handlers.insert("mcp_artifacts".to_string(), artifacts_manager);
-        handlers.insert("mcp_context".to_string(), context_manager);
-        handlers.insert("mcp_profile".to_string(), profile_manager);
-        handlers.insert("mcp_project".to_string(), project_manager);
-        handlers.insert("mcp_target".to_string(), target_manager);
-        handlers.insert("mcp_policy".to_string(), policy_manager);
-        handlers.insert("mcp_capability".to_string(), capability_manager);
-        handlers.insert("mcp_evidence".to_string(), evidence_manager);
-        handlers.insert("mcp_workspace".to_string(), workspace_manager);
-        handlers.insert("mcp_runbook".to_string(), runbook_manager.clone());
-        handlers.insert("mcp_env".to_string(), env_manager);
-        handlers.insert("mcp_vault".to_string(), vault_manager);
-        handlers.insert("mcp_ssh_manager".to_string(), ssh_manager);
-        handlers.insert("mcp_api_client".to_string(), api_manager);
-        handlers.insert("mcp_psql_manager".to_string(), postgres_manager);
-        handlers.insert("mcp_local".to_string(), local_manager);
-        handlers.insert("mcp_repo".to_string(), repo_manager);
-        handlers.insert("mcp_pipeline".to_string(), pipeline_manager);
-        handlers.insert("mcp_intent".to_string(), intent_manager.clone());
-        handlers.insert("mcp_jobs".to_string(), job_manager);
-        handlers.insert("mcp_operation".to_string(), operation_manager);
-        handlers.insert("mcp_receipt".to_string(), receipt_manager);
+        handlers.insert("alias".to_string(), alias_manager);
+        handlers.insert("preset".to_string(), preset_manager);
+        handlers.insert("state".to_string(), state_manager);
+        handlers.insert("audit".to_string(), audit_manager);
+        handlers.insert("artifacts".to_string(), artifacts_manager);
+        handlers.insert("context".to_string(), context_manager);
+        handlers.insert("profile".to_string(), profile_manager.clone());
+        handlers.insert("project".to_string(), project_manager.clone());
+        handlers.insert("target".to_string(), target_manager.clone());
+        handlers.insert("policy".to_string(), policy_manager.clone());
+        handlers.insert("capability".to_string(), capability_manager.clone());
+        handlers.insert("evidence".to_string(), evidence_manager);
+        handlers.insert("workspace".to_string(), workspace_manager);
+        handlers.insert("runbook".to_string(), runbook_manager.clone());
+        handlers.insert("env".to_string(), env_manager);
+        handlers.insert("vault".to_string(), vault_manager);
+        handlers.insert("ssh".to_string(), ssh_manager);
+        handlers.insert("api".to_string(), api_manager);
+        handlers.insert("sql".to_string(), postgres_manager);
+        handlers.insert("local".to_string(), local_manager);
+        handlers.insert("repo".to_string(), repo_manager);
+        handlers.insert("pipeline".to_string(), pipeline_manager);
+        handlers.insert("intent".to_string(), intent_manager.clone());
+        handlers.insert("job".to_string(), job_manager.clone());
+        handlers.insert("operation".to_string(), operation_manager.clone());
+        handlers.insert("receipt".to_string(), receipt_manager.clone());
 
-        let alias_map = crate::mcp::aliases::builtin_tool_alias_map_owned();
+        let alias_map = builtin_tool_alias_map_owned();
 
         Self::validate_tool_wiring(&handlers, &alias_map)?;
 
@@ -339,7 +349,22 @@ impl App {
             runbook_manager,
             state_service,
             job_service,
+            project_manager,
+            target_manager,
+            profile_manager,
+            capability_manager,
+            policy_manager,
+            operation_manager,
+            receipt_manager,
+            job_manager,
         })
+    }
+
+    pub fn description_snapshot(&self) -> Result<serde_json::Value, ToolError> {
+        DescriptionService::snapshot(
+            self.capability_service.as_ref(),
+            self.runbook_service.as_ref(),
+        )
     }
 }
 
@@ -359,22 +384,22 @@ mod tests {
     }
 
     #[test]
-    fn validate_tool_wiring_requires_discovery_only_handlers() {
-        let missing_tool = "mcp_receipt";
-        assert!(discovery_tool_catalog()
+    fn validate_tool_wiring_requires_canonical_handlers() {
+        let missing_tool = "receipt";
+        assert!(tool_contract_catalog()
             .iter()
-            .any(|tool| tool.name == missing_tool && tool.discovery_only));
+            .any(|tool| tool.name == missing_tool));
 
         let mut handlers: HashMap<String, Arc<dyn ToolHandler>> = HashMap::new();
-        for tool in discovery_tool_catalog().iter() {
-            if ["help", "legend", missing_tool].contains(&tool.name.as_str()) {
+        for tool in tool_contract_catalog().iter() {
+            if tool.name == missing_tool {
                 continue;
             }
             handlers.insert(tool.name.clone(), Arc::new(NoopHandler));
         }
 
         let err = App::validate_tool_wiring(&handlers, &HashMap::new())
-            .expect_err("discovery-only canonical tool should be required");
+            .expect_err("canonical tool contract should be required");
         assert_eq!(err.message, "Tool wiring is incomplete");
         assert_eq!(
             err.details

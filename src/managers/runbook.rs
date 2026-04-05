@@ -1,9 +1,10 @@
 use crate::errors::ToolError;
-use crate::mcp::tool_effects::resolve_tool_call_effects;
 use crate::services::logger::Logger;
 use crate::services::runbook::RunbookService;
 use crate::services::state::StateService;
 use crate::services::tool_executor::ToolExecutor;
+use crate::tooling::effects::resolve_tool_call_effects;
+use crate::tooling::names::canonical_tool_name;
 use crate::utils::data_path::get_path_value;
 use crate::utils::effects::{resolve_effects, Effects};
 use crate::utils::listing::ListFilters;
@@ -41,7 +42,7 @@ fn merge_effects(mut base: Effects, other: Effects) -> Effects {
     base
 }
 
-fn infer_effects_from_steps(runbook: &Value) -> Effects {
+fn infer_effects_from_steps(runbook: &Value, context: Option<&Value>, missing: &str) -> Effects {
     let steps = runbook
         .get("steps")
         .and_then(|v| v.as_array())
@@ -57,10 +58,13 @@ fn infer_effects_from_steps(runbook: &Value) -> Effects {
         if tool.trim().is_empty() {
             continue;
         }
-        let args = step
+        let raw_args = step
             .get("args")
             .cloned()
             .unwrap_or_else(|| Value::Object(Default::default()));
+        let args = context
+            .and_then(|context| resolve_templates(&raw_args, context, missing).ok())
+            .unwrap_or(raw_args);
         let resolved = resolve_tool_call_effects(tool, &args);
         out = merge_effects(out, resolved.effects);
     }
@@ -252,9 +256,21 @@ impl RunbookManager {
             ));
         }
 
+        let state_snapshot = self.state_service.dump(Some("any"))?;
+        let mut context = serde_json::json!({
+            "input": input,
+            "state": state_snapshot.get("state").cloned().unwrap_or(Value::Object(Default::default())),
+            "steps": {},
+            "trace_id": trace_id,
+            "span_id": span_id,
+            "parent_span_id": parent_span_id,
+            "apply": apply,
+            "confirm": confirm,
+        });
+
         let effects = merge_effects(
             resolve_effects(&runbook),
-            infer_effects_from_steps(&runbook),
+            infer_effects_from_steps(&runbook, Some(&context), template_missing),
         );
         if effects.requires_apply && !apply {
             return Err(
@@ -274,17 +290,6 @@ impl RunbookManager {
         }
 
         let mut results: Vec<Value> = Vec::new();
-        let state_snapshot = self.state_service.dump(Some("any"))?;
-        let mut context = serde_json::json!({
-            "input": input,
-            "state": state_snapshot.get("state").cloned().unwrap_or(Value::Object(Default::default())),
-            "steps": {},
-            "trace_id": trace_id,
-            "span_id": span_id,
-            "parent_span_id": parent_span_id,
-            "apply": apply,
-            "confirm": confirm,
-        });
 
         for (index, step) in steps.iter().enumerate() {
             let step_key = step
@@ -457,7 +462,7 @@ impl RunbookManager {
         let tool = step.get("tool").and_then(|v| v.as_str()).ok_or_else(|| {
             ToolError::invalid_params(format!("runbook step '{}' missing tool", step_key))
         })?;
-        if tool == "mcp_runbook" {
+        if canonical_tool_name(tool) == "runbook" {
             return Err(ToolError::denied(
                 "Nested runbook execution is not supported",
             ));

@@ -212,6 +212,24 @@ impl CapabilityService {
             }
             a_name.cmp(b_name)
         });
+        if matched.len() > 1 {
+            return Err(ambiguity_error(
+                format!("Intent '{}' matched multiple capabilities", intent_type),
+                matched
+                    .iter()
+                    .map(|candidate| {
+                        serde_json::json!({
+                            "name": candidate.get("name").cloned().unwrap_or(Value::Null),
+                            "intent": candidate.get("intent").cloned().unwrap_or(Value::Null),
+                            "manifest_source": candidate.get("manifest_source").cloned().unwrap_or(Value::Null),
+                            "manifest_path": candidate.get("manifest_path").cloned().unwrap_or(Value::Null),
+                            "when": candidate.get("when").cloned().unwrap_or(Value::Null),
+                            "reason": "matched intent and when-clause"
+                        })
+                    })
+                    .collect(),
+            ));
+        }
         Ok(matched[0].clone())
     }
 
@@ -271,6 +289,32 @@ impl CapabilityService {
         }
 
         scored.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
+        let top_score = scored[0].0;
+        let top_matches = scored
+            .iter()
+            .filter(|(score, _, _)| *score == top_score)
+            .collect::<Vec<_>>();
+        if top_matches.len() > 1 {
+            return Err(ambiguity_error(
+                format!(
+                    "Operation family='{}' verb='{}' matched multiple capabilities",
+                    family, verb
+                ),
+                top_matches
+                    .iter()
+                    .map(|(score, name, capability)| {
+                        serde_json::json!({
+                            "name": name,
+                            "score": score,
+                            "intent": capability.get("intent").cloned().unwrap_or(Value::Null),
+                            "manifest_source": capability.get("manifest_source").cloned().unwrap_or(Value::Null),
+                            "manifest_path": capability.get("manifest_path").cloned().unwrap_or(Value::Null),
+                            "reason": operation_reason(capability, &family, &verb),
+                        })
+                    })
+                    .collect(),
+            ));
+        }
         Ok(scored[0].2.clone())
     }
 
@@ -753,5 +797,53 @@ fn operation_aliases(verb: &str) -> Vec<String> {
             .map(str::to_string)
             .collect(),
         _ => vec![verb.to_string()],
+    }
+}
+
+fn ambiguity_error(message: String, candidates: Vec<Value>) -> ToolError {
+    ToolError::new(
+        crate::errors::ToolErrorKind::Conflict,
+        "AMBIGUOUS_CAPABILITY",
+        message,
+    )
+    .with_hint(
+        "Provide an explicit capability, or tighten project/target/repo_root context so only one candidate remains."
+            .to_string(),
+    )
+    .with_details(serde_json::json!({
+        "candidates": candidates,
+    }))
+}
+
+fn operation_reason(capability: &Value, family: &str, verb: &str) -> String {
+    let tokens = capability_tokens(
+        capability
+            .get("intent")
+            .and_then(|value| value.as_str())
+            .unwrap_or(""),
+        capability
+            .get("name")
+            .and_then(|value| value.as_str())
+            .unwrap_or(""),
+        family,
+    );
+    let aliases = operation_aliases(verb);
+    let matched_aliases = aliases
+        .iter()
+        .filter(|alias| {
+            tokens
+                .iter()
+                .any(|token| token == *alias || token.contains(*alias))
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    if matched_aliases.is_empty() {
+        format!("matched family '{}'", family)
+    } else {
+        format!(
+            "matched family '{}' and verb aliases {}",
+            family,
+            matched_aliases.join(", ")
+        )
     }
 }

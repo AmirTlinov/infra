@@ -4,12 +4,12 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::errors::ToolError;
-use crate::mcp::catalog::validate_tool_args;
-use crate::mcp::tool_effects;
 use crate::services::alias::AliasService;
 use crate::services::audit::AuditService;
 use crate::services::logger::Logger;
 use crate::services::state::StateService;
+use crate::tooling::catalog::validate_tool_args;
+use crate::tooling::effects;
 use crate::utils::artifacts::{
     build_tool_call_file_ref, resolve_context_root, write_text_artifact,
 };
@@ -268,22 +268,23 @@ impl ToolExecutor {
             let capture_truncated = bytes > ctx.max_capture_bytes;
 
             let mut artifact = Value::Null;
-            if !has_sensitive && ctx.context_root.is_some() && state.spilled < ctx.max_spills {
-                let filename = resolve_spill_filename(path_segments, state);
-                let reference = build_tool_call_file_ref(
-                    ctx.trace_id.as_deref(),
-                    ctx.span_id.as_deref(),
-                    &filename,
-                )?;
-                let written =
-                    write_text_artifact(ctx.context_root.as_ref().unwrap(), &reference, &capped)?;
-                state.spilled += 1;
-                artifact = serde_json::json!({
-                    "uri": written.uri,
-                    "rel": written.rel,
-                    "bytes": written.bytes,
-                    "truncated": capture_truncated,
-                });
+            if !has_sensitive && state.spilled < ctx.max_spills {
+                if let Some(context_root) = ctx.context_root.as_ref() {
+                    let filename = resolve_spill_filename(path_segments, state);
+                    let reference = build_tool_call_file_ref(
+                        ctx.trace_id.as_deref(),
+                        ctx.span_id.as_deref(),
+                        &filename,
+                    )?;
+                    let written = write_text_artifact(context_root, &reference, &capped)?;
+                    state.spilled += 1;
+                    artifact = serde_json::json!({
+                        "uri": written.uri,
+                        "rel": written.rel,
+                        "bytes": written.bytes,
+                        "truncated": capture_truncated,
+                    });
+                }
             }
             return Ok(serde_json::json!({
                 "truncated": true,
@@ -377,8 +378,7 @@ impl ToolExecutor {
             let _ = self.state_service.set(&key, spilled.clone(), Some(&scope));
         }
 
-        let resolved_effects =
-            tool_effects::resolve_tool_call_effects_for_result(tool, args, result);
+        let resolved_effects = effects::resolve_tool_call_effects_for_result(tool, args, result);
         let meta = serde_json::json!({
             "tool": tool,
             "action": args.get("action").cloned().unwrap_or(Value::Null),
@@ -411,12 +411,10 @@ impl ToolExecutor {
                 .collect();
             let suggestions = suggest(tool, &candidates, 6);
             let hint = if suggestions.is_empty() {
-                "Call help() to list available tools".to_string()
+                "Use canonical tool names from tool_contracts.json or the infra skill examples."
+                    .to_string()
             } else {
-                format!(
-                    "Did you mean: {} (or call help() for the full list)",
-                    suggestions.join(", ")
-                )
+                format!("Did you mean: {}", suggestions.join(", "))
             };
             return Err(
                 ToolError::invalid_params(format!("Unknown tool: {}", tool)).with_hint(hint)
@@ -464,7 +462,7 @@ impl ToolExecutor {
 
         // Global effects enforcement (flagship safety): tools declare whether they are read/write/mixed
         // and whether they need explicit `apply` (opt-in) and/or `confirm` (irreversible).
-        let effects = tool_effects::resolve_tool_call_effects(&resolved_tool, &merged_args);
+        let effects = effects::resolve_tool_call_effects(&resolved_tool, &merged_args);
         let apply = merged_args
             .get("apply")
             .and_then(|v| v.as_bool())

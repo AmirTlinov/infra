@@ -1,19 +1,31 @@
- [LEGEND]
-GOLDEN_PATH = The recommended sequence that keeps work safe and deterministic.
-ADD_TOOL = The safe workflow for adding a new tool handler.
+[LEGEND]
+GOLDEN_PATH = Short sequence that keeps operator work honest and reproducible.
+CANONICAL_LOOP = Preferred prod loop through `infra` CLI surfaces before any raw expert detour.
+RAW_DETOUR = Direct expert-manager usage outside the canonical loop; allowed only when the CLI surface cannot answer the question.
 
-  [CONTENT]
+[CONTENT]
 Golden path ([GOLDEN_PATH]):
-1) Read MAP.md.
-2) If you are changing an interface, follow [CHANGE_PROTOCOL] (contracts → implementation → tests → docs).
-3) Implement the change.
-4) Add/adjust tests (prefer focused regression for the changed behavior).
-5) Run `./tools/gate-code` for engineering verification and `./tools/gate-docs` for doc/contract hygiene; finish with `./tools/gate` until green ([GATE], fail-closed).
-6) Refresh the machine index: `./tools/context`.
-7) Use `docs/RECIPES.md` for copy/paste “request → expected artifact” flows (deploy/rollback/db/incident/triage).
+1) Read `MAP.md`.
+2) If the change touches contracts, follow contracts -> implementation -> tests -> docs.
+3) Run `./tools/doctor`.
+4) Use the [CANONICAL_LOOP].
+5) Run `./tools/gate`.
 
-Adding a tool ([ADD_TOOL]):
-1) Follow `REPO_RULES.md` for module placement and wiring.
-2) Add the manager under `src/managers/` and implement `ToolHandler`.
-3) Wire it in `src/app.rs` (handlers + alias_map if needed).
-4) Add a small regression test and run the [GATE].
+[CANONICAL_LOOP]:
+1) `infra describe status`
+2) `infra target resolve` / `infra profile get` / `infra policy check`
+3) `infra capability resolve`
+4) `infra operation observe|plan|apply|verify`
+5) `infra receipt get`
+6) `infra job status|wait` when background work exists
+
+Rules:
+- Prefer `--json` for complex payloads and `--arg key=value` for short calls.
+- Treat `receipt` as the canonical result package; do not separately hunt for evidence unless the receipt itself says it is missing.
+- Treat `waiting_external` as not done.
+- Treat `verify` without explicit checks as invalid work, not as a soft read.
+- Treat ambiguity as a stop signal; do not guess between capabilities.
+
+[RAW_DETOUR]:
+- Allowed only when the CLI surface truly cannot express the needed action.
+- If you detour, say why the canonical CLI surface was insufficient.

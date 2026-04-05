@@ -2046,7 +2046,7 @@ impl SshManager {
                 "log_path": job.get("log_path").cloned().unwrap_or(Value::Null),
                 "exit_path": job.get("exit_path").cloned().unwrap_or(Value::Null),
                 "provider": {
-                    "tool": "mcp_ssh_manager",
+                    "tool": "ssh",
                     "profile_name": job.get("profile_name").cloned().unwrap_or(Value::Null),
                     "pid": job.get("pid").cloned().unwrap_or(Value::Null),
                     "pid_path": job.get("pid_path").cloned().unwrap_or(Value::Null),
@@ -2272,7 +2272,7 @@ fn resolve_tool_call_budget_ms() -> u64 {
     std::env::var("INFRA_TOOL_CALL_TIMEOUT_MS")
         .ok()
         .and_then(|v| v.parse::<u64>().ok())
-        .unwrap_or(network_constants::TIMEOUT_MCP_TOOL_CALL_MS)
+        .unwrap_or(network_constants::TIMEOUT_TOOL_CALL_MS)
 }
 
 fn resolve_exec_default_timeout_ms() -> u64 {
@@ -2546,7 +2546,7 @@ fn connect_session(connection: &SshConnection) -> Result<(Session, Option<String
         Session::new().map_err(|_| ToolError::internal("Failed to create SSH session"))?;
     session.set_tcp_stream(tcp);
     // Hard-stop for blocking handshake/auth steps. Without this, slow/broken handshakes can
-    // exceed the MCP tool-call budget and stall the whole stdio server.
+    // exceed the shared tool-call budget and stall the foreground command.
     session.set_timeout(connection.ready_timeout_ms as u32);
     session.handshake().map_err(map_ssh_error)?;
 

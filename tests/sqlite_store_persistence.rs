@@ -23,10 +23,10 @@ fn write_json(path: &std::path::Path, value: &Value) {
 async fn sqlite_persistent_state_preserves_concurrent_service_writes() {
     let _guard = ENV_LOCK.lock().await;
 
-    let prev_profiles = std::env::var("MCP_PROFILES_DIR").ok();
+    let prev_profiles = std::env::var("INFRA_PROFILES_DIR").ok();
     let tmp_dir = std::env::temp_dir().join(format!("infra-sqlite-state-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&tmp_dir).expect("create temp dir");
-    std::env::set_var("MCP_PROFILES_DIR", &tmp_dir);
+    std::env::set_var("INFRA_PROFILES_DIR", &tmp_dir);
 
     let service_a = StateService::new().expect("state a");
     let service_b = StateService::new().expect("state b");
@@ -52,17 +52,17 @@ async fn sqlite_persistent_state_preserves_concurrent_service_writes() {
         "sqlite store should be created"
     );
 
-    restore_env("MCP_PROFILES_DIR", prev_profiles);
+    restore_env("INFRA_PROFILES_DIR", prev_profiles);
 }
 
 #[tokio::test]
 async fn sqlite_jobs_persist_across_service_instances_without_jobs_json_writes() {
     let _guard = ENV_LOCK.lock().await;
 
-    let prev_profiles = std::env::var("MCP_PROFILES_DIR").ok();
+    let prev_profiles = std::env::var("INFRA_PROFILES_DIR").ok();
     let tmp_dir = std::env::temp_dir().join(format!("infra-sqlite-jobs-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&tmp_dir).expect("create temp dir");
-    std::env::set_var("MCP_PROFILES_DIR", &tmp_dir);
+    std::env::set_var("INFRA_PROFILES_DIR", &tmp_dir);
 
     let logger = Logger::new("test");
     let service_a = JobService::new(logger.clone()).expect("job service a");
@@ -99,17 +99,17 @@ async fn sqlite_jobs_persist_across_service_instances_without_jobs_json_writes()
         "creating jobs must not rewrite a legacy jobs.json store"
     );
 
-    restore_env("MCP_PROFILES_DIR", prev_profiles);
+    restore_env("INFRA_PROFILES_DIR", prev_profiles);
 }
 
 #[tokio::test]
 async fn sqlite_jobs_import_legacy_jobs_json_once() {
     let _guard = ENV_LOCK.lock().await;
 
-    let prev_profiles = std::env::var("MCP_PROFILES_DIR").ok();
+    let prev_profiles = std::env::var("INFRA_PROFILES_DIR").ok();
     let tmp_dir = std::env::temp_dir().join(format!("infra-legacy-jobs-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&tmp_dir).expect("create temp dir");
-    std::env::set_var("MCP_PROFILES_DIR", &tmp_dir);
+    std::env::set_var("INFRA_PROFILES_DIR", &tmp_dir);
 
     write_json(
         &tmp_dir.join("jobs.json"),
@@ -146,21 +146,21 @@ async fn sqlite_jobs_import_legacy_jobs_json_once() {
         Some("ssh_exec")
     );
 
-    restore_env("MCP_PROFILES_DIR", prev_profiles);
+    restore_env("INFRA_PROFILES_DIR", prev_profiles);
 }
 
 #[tokio::test]
 async fn runbook_manifests_prefer_project_entries_over_defaults_after_restart() {
     let _guard = ENV_LOCK.lock().await;
 
-    let prev_profiles = std::env::var("MCP_PROFILES_DIR").ok();
-    let prev_runbook_manifest = std::env::var("MCP_RUNBOOKS_PATH").ok();
-    let prev_runbooks = std::env::var("MCP_DEFAULT_RUNBOOKS_PATH").ok();
+    let prev_profiles = std::env::var("INFRA_PROFILES_DIR").ok();
+    let prev_runbook_manifest = std::env::var("INFRA_RUNBOOKS_PATH").ok();
+    let prev_runbooks = std::env::var("INFRA_DEFAULT_RUNBOOKS_PATH").ok();
 
     let tmp_dir =
         std::env::temp_dir().join(format!("infra-sqlite-runbook-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&tmp_dir).expect("create temp dir");
-    std::env::set_var("MCP_PROFILES_DIR", &tmp_dir);
+    std::env::set_var("INFRA_PROFILES_DIR", &tmp_dir);
 
     let defaults_path = tmp_dir.join("defaults-runbooks.json");
     write_json(
@@ -180,10 +180,10 @@ async fn runbook_manifests_prefer_project_entries_over_defaults_after_restart() 
             }
         }),
     );
-    std::env::set_var("MCP_DEFAULT_RUNBOOKS_PATH", &defaults_path);
+    std::env::set_var("INFRA_DEFAULT_RUNBOOKS_PATH", &defaults_path);
 
     let project_manifest_path = tmp_dir.join("runbooks.json");
-    std::env::set_var("MCP_RUNBOOKS_PATH", &project_manifest_path);
+    std::env::set_var("INFRA_RUNBOOKS_PATH", &project_manifest_path);
 
     write_json(
         &project_manifest_path,
@@ -272,7 +272,7 @@ async fn runbook_manifests_prefer_project_entries_over_defaults_after_restart() 
         Some("file_backed_manifest")
     );
 
-    restore_env("MCP_DEFAULT_RUNBOOKS_PATH", prev_runbooks);
-    restore_env("MCP_RUNBOOKS_PATH", prev_runbook_manifest);
-    restore_env("MCP_PROFILES_DIR", prev_profiles);
+    restore_env("INFRA_DEFAULT_RUNBOOKS_PATH", prev_runbooks);
+    restore_env("INFRA_RUNBOOKS_PATH", prev_runbook_manifest);
+    restore_env("INFRA_PROFILES_DIR", prev_profiles);
 }

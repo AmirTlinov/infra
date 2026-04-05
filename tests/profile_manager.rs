@@ -22,9 +22,9 @@ async fn profile_manager_exposes_read_only_canonical_surface() {
     let tmp_dir = std::env::temp_dir().join(format!("infra-profile-test-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&tmp_dir).expect("create temp dir");
 
-    let prev_profiles = std::env::var("MCP_PROFILES_DIR").ok();
+    let prev_profiles = std::env::var("INFRA_PROFILES_DIR").ok();
     let prev_secret_export = std::env::var("INFRA_ALLOW_SECRET_EXPORT").ok();
-    std::env::set_var("MCP_PROFILES_DIR", &tmp_dir);
+    std::env::set_var("INFRA_PROFILES_DIR", &tmp_dir);
     std::env::remove_var("INFRA_ALLOW_SECRET_EXPORT");
 
     let logger = Logger::new("test");
@@ -104,6 +104,6 @@ async fn profile_manager_exposes_read_only_canonical_surface() {
     );
 
     restore_env("INFRA_ALLOW_SECRET_EXPORT", prev_secret_export);
-    restore_env("MCP_PROFILES_DIR", prev_profiles);
+    restore_env("INFRA_PROFILES_DIR", prev_profiles);
     std::fs::remove_dir_all(&tmp_dir).ok();
 }

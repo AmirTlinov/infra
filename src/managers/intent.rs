@@ -755,7 +755,7 @@ fn normalize_inputs(
 
     if pass_through {
         for (key, value) in intent_inputs {
-            resolved.entry(key.clone()).or_insert_with(|| value.clone());
+            resolved.insert(key.clone(), value.clone());
         }
     }
 

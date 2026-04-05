@@ -33,9 +33,9 @@ fn manifest_sha256(value: &Value) -> String {
 async fn capability_reads_are_manifest_first_and_expose_provenance() {
     let _guard = ENV_LOCK.lock().await;
 
-    let prev_profiles = std::env::var("MCP_PROFILES_DIR").ok();
-    let prev_defaults = std::env::var("MCP_DEFAULT_CAPABILITIES_PATH").ok();
-    let prev_capabilities = std::env::var("MCP_CAPABILITIES_PATH").ok();
+    let prev_profiles = std::env::var("INFRA_PROFILES_DIR").ok();
+    let prev_defaults = std::env::var("INFRA_DEFAULT_CAPABILITIES_PATH").ok();
+    let prev_capabilities = std::env::var("INFRA_CAPABILITIES_PATH").ok();
 
     let tmp_dir =
         std::env::temp_dir().join(format!("infra-capability-test-{}", uuid::Uuid::new_v4()));
@@ -67,9 +67,9 @@ async fn capability_reads_are_manifest_first_and_expose_provenance() {
     });
     write_json(&manifest_path, &manifest);
 
-    std::env::set_var("MCP_PROFILES_DIR", &tmp_dir);
-    std::env::set_var("MCP_DEFAULT_CAPABILITIES_PATH", &manifest_path);
-    std::env::set_var("MCP_CAPABILITIES_PATH", &manifest_path);
+    std::env::set_var("INFRA_PROFILES_DIR", &tmp_dir);
+    std::env::set_var("INFRA_DEFAULT_CAPABILITIES_PATH", &manifest_path);
+    std::env::set_var("INFRA_CAPABILITIES_PATH", &manifest_path);
 
     let store = StoreDb::new().expect("store db");
     store
@@ -236,9 +236,9 @@ async fn capability_reads_are_manifest_first_and_expose_provenance() {
         Some(expected_sha.as_str())
     );
 
-    restore_env("MCP_DEFAULT_CAPABILITIES_PATH", prev_defaults);
-    restore_env("MCP_CAPABILITIES_PATH", prev_capabilities);
-    restore_env("MCP_PROFILES_DIR", prev_profiles);
+    restore_env("INFRA_DEFAULT_CAPABILITIES_PATH", prev_defaults);
+    restore_env("INFRA_CAPABILITIES_PATH", prev_capabilities);
+    restore_env("INFRA_PROFILES_DIR", prev_profiles);
     std::fs::remove_dir_all(&tmp_dir).ok();
 }
 
@@ -246,9 +246,9 @@ async fn capability_reads_are_manifest_first_and_expose_provenance() {
 async fn capability_manifest_prefers_project_over_default_manifest() {
     let _guard = ENV_LOCK.lock().await;
 
-    let prev_profiles = std::env::var("MCP_PROFILES_DIR").ok();
-    let prev_defaults = std::env::var("MCP_DEFAULT_CAPABILITIES_PATH").ok();
-    let prev_capabilities = std::env::var("MCP_CAPABILITIES_PATH").ok();
+    let prev_profiles = std::env::var("INFRA_PROFILES_DIR").ok();
+    let prev_defaults = std::env::var("INFRA_DEFAULT_CAPABILITIES_PATH").ok();
+    let prev_capabilities = std::env::var("INFRA_CAPABILITIES_PATH").ok();
 
     let tmp_dir =
         std::env::temp_dir().join(format!("infra-capability-test-{}", uuid::Uuid::new_v4()));
@@ -306,9 +306,9 @@ async fn capability_manifest_prefers_project_over_default_manifest() {
     });
     write_json(&project_manifest_path, &project_manifest);
 
-    std::env::set_var("MCP_PROFILES_DIR", &tmp_dir);
-    std::env::set_var("MCP_DEFAULT_CAPABILITIES_PATH", &default_manifest_path);
-    std::env::set_var("MCP_CAPABILITIES_PATH", &project_manifest_path);
+    std::env::set_var("INFRA_PROFILES_DIR", &tmp_dir);
+    std::env::set_var("INFRA_DEFAULT_CAPABILITIES_PATH", &default_manifest_path);
+    std::env::set_var("INFRA_CAPABILITIES_PATH", &project_manifest_path);
 
     let security = Arc::new(Security::new().expect("security"));
     let service = Arc::new(CapabilityService::new(security).expect("capability service"));
@@ -422,9 +422,9 @@ async fn capability_manifest_prefers_project_over_default_manifest() {
         Some(expected_project_sha.as_str())
     );
 
-    restore_env("MCP_CAPABILITIES_PATH", prev_capabilities);
-    restore_env("MCP_DEFAULT_CAPABILITIES_PATH", prev_defaults);
-    restore_env("MCP_PROFILES_DIR", prev_profiles);
+    restore_env("INFRA_CAPABILITIES_PATH", prev_capabilities);
+    restore_env("INFRA_DEFAULT_CAPABILITIES_PATH", prev_defaults);
+    restore_env("INFRA_PROFILES_DIR", prev_profiles);
     std::fs::remove_dir_all(&tmp_dir).ok();
 }
 
@@ -432,9 +432,9 @@ async fn capability_manifest_prefers_project_over_default_manifest() {
 async fn capability_mutation_actions_are_compatibility_only() {
     let _guard = ENV_LOCK.lock().await;
 
-    let prev_profiles = std::env::var("MCP_PROFILES_DIR").ok();
-    let prev_defaults = std::env::var("MCP_DEFAULT_CAPABILITIES_PATH").ok();
-    let prev_capabilities = std::env::var("MCP_CAPABILITIES_PATH").ok();
+    let prev_profiles = std::env::var("INFRA_PROFILES_DIR").ok();
+    let prev_defaults = std::env::var("INFRA_DEFAULT_CAPABILITIES_PATH").ok();
+    let prev_capabilities = std::env::var("INFRA_CAPABILITIES_PATH").ok();
 
     let tmp_dir =
         std::env::temp_dir().join(format!("infra-capability-test-{}", uuid::Uuid::new_v4()));
@@ -457,9 +457,9 @@ async fn capability_mutation_actions_are_compatibility_only() {
     });
     write_json(&manifest_path, &manifest);
 
-    std::env::set_var("MCP_PROFILES_DIR", &tmp_dir);
-    std::env::set_var("MCP_DEFAULT_CAPABILITIES_PATH", &manifest_path);
-    std::env::set_var("MCP_CAPABILITIES_PATH", &manifest_path);
+    std::env::set_var("INFRA_PROFILES_DIR", &tmp_dir);
+    std::env::set_var("INFRA_DEFAULT_CAPABILITIES_PATH", &manifest_path);
+    std::env::set_var("INFRA_CAPABILITIES_PATH", &manifest_path);
 
     let security = Arc::new(Security::new().expect("security"));
     let service = Arc::new(CapabilityService::new(security).expect("capability service"));
@@ -517,8 +517,8 @@ async fn capability_mutation_actions_are_compatibility_only() {
         Some(&json!(3))
     );
 
-    restore_env("MCP_DEFAULT_CAPABILITIES_PATH", prev_defaults);
-    restore_env("MCP_CAPABILITIES_PATH", prev_capabilities);
-    restore_env("MCP_PROFILES_DIR", prev_profiles);
+    restore_env("INFRA_DEFAULT_CAPABILITIES_PATH", prev_defaults);
+    restore_env("INFRA_CAPABILITIES_PATH", prev_capabilities);
+    restore_env("INFRA_PROFILES_DIR", prev_profiles);
     std::fs::remove_dir_all(&tmp_dir).ok();
 }

@@ -30,8 +30,9 @@ pub fn resolve_stdin_source(args: &Value) -> Result<Option<StdinSource>, ToolErr
             return Err(ToolError::invalid_params("stdin_ref must include a path"));
         }
         let context_root = resolve_context_root().ok_or_else(|| {
-            ToolError::denied("stdin_ref requires context repo root")
-                .with_hint("Set INFRA_CONTEXT_REPO_ROOT or MCP_CONTEXT_REPO_ROOT.".to_string())
+            ToolError::denied("stdin_ref requires context repo root").with_hint(
+                "Set INFRA_CONTEXT_REPO_ROOT to the repo root that owns artifacts.".to_string(),
+            )
         })?;
         let path = resolve_artifact_path(&context_root, rel)?;
         if !path.exists() {

@@ -1,4 +1,6 @@
 use infra::errors::ToolErrorKind;
+use infra::managers::receipt::ReceiptManager;
+use infra::services::job::JobService;
 use infra::services::logger::Logger;
 use infra::services::operation::OperationService;
 use infra::services::validation::Validation;
@@ -7,39 +9,6 @@ use std::sync::Arc;
 
 mod common;
 use common::ENV_LOCK;
-
-mod errors {
-    pub use infra::errors::*;
-}
-
-mod services {
-    pub mod logger {
-        pub use infra::services::logger::*;
-    }
-
-    pub mod operation {
-        pub use infra::services::operation::*;
-    }
-
-    pub mod tool_executor {
-        pub use infra::services::tool_executor::*;
-    }
-
-    pub mod validation {
-        pub use infra::services::validation::*;
-    }
-}
-
-mod utils {
-    pub mod tool_errors {
-        pub use infra::utils::tool_errors::*;
-    }
-}
-
-#[path = "../src/managers/receipt.rs"]
-mod receipt_impl;
-
-use receipt_impl::ReceiptManager;
 
 struct EnvGuard {
     key: &'static str,
@@ -64,7 +33,22 @@ impl Drop for EnvGuard {
 }
 
 fn receipt_manager(operation_service: Arc<OperationService>) -> ReceiptManager {
-    ReceiptManager::new(Logger::new("test"), Validation::new(), operation_service)
+    receipt_manager_with_jobs(operation_service).0
+}
+
+fn receipt_manager_with_jobs(
+    operation_service: Arc<OperationService>,
+) -> (ReceiptManager, Arc<JobService>) {
+    let job_service = Arc::new(JobService::new(Logger::new("test")).expect("job service"));
+    (
+        ReceiptManager::new(
+            Logger::new("test"),
+            Validation::new(),
+            operation_service,
+            job_service.clone(),
+        ),
+        job_service,
+    )
 }
 
 fn persist_receipt(
@@ -78,6 +62,7 @@ fn persist_receipt(
         "operation_id": operation_id,
         "status": status,
         "updated_at": updated_at,
+        "success": matches!(status, "succeeded" | "completed"),
     });
     merge_into(&mut receipt, payload);
     operation_service
@@ -107,7 +92,7 @@ async fn receipt_list_applies_status_and_limit_filters() {
     let temp_dir =
         std::env::temp_dir().join(format!("infra-receipt-manager-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&temp_dir).expect("create temp dir");
-    let _db_guard = EnvGuard::set_path("MCP_STORE_DB_PATH", &temp_dir.join("infra.db"));
+    let _db_guard = EnvGuard::set_path("INFRA_STORE_DB_PATH", &temp_dir.join("infra.db"));
 
     let operation_service = Arc::new(OperationService::new().expect("operation service"));
     persist_receipt(
@@ -211,7 +196,7 @@ async fn receipt_list_applies_status_and_limit_filters() {
     );
     assert_eq!(
         latest.get("status").and_then(|v| v.as_str()),
-        Some("succeeded")
+        Some("completed")
     );
     assert_eq!(
         latest.get("effect_kind").and_then(|v| v.as_str()),
@@ -233,7 +218,7 @@ async fn receipt_get_returns_canonical_typed_view() {
     let temp_dir =
         std::env::temp_dir().join(format!("infra-receipt-manager-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&temp_dir).expect("create temp dir");
-    let _db_guard = EnvGuard::set_path("MCP_STORE_DB_PATH", &temp_dir.join("infra.db"));
+    let _db_guard = EnvGuard::set_path("INFRA_STORE_DB_PATH", &temp_dir.join("infra.db"));
 
     let operation_service = Arc::new(OperationService::new().expect("operation service"));
     persist_receipt(
@@ -285,6 +270,10 @@ async fn receipt_get_returns_canonical_typed_view() {
     assert_eq!(
         receipt.get("action").and_then(|v| v.as_str()),
         Some("verify")
+    );
+    assert_eq!(
+        receipt.get("status").and_then(|v| v.as_str()),
+        Some("completed")
     );
     assert_eq!(
         receipt.get("family").and_then(|v| v.as_str()),
@@ -350,7 +339,7 @@ async fn receipt_get_returns_not_found_for_missing_operation_id() {
     let temp_dir =
         std::env::temp_dir().join(format!("infra-receipt-manager-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&temp_dir).expect("create temp dir");
-    let _db_guard = EnvGuard::set_path("MCP_STORE_DB_PATH", &temp_dir.join("infra.db"));
+    let _db_guard = EnvGuard::set_path("INFRA_STORE_DB_PATH", &temp_dir.join("infra.db"));
 
     let operation_service = Arc::new(OperationService::new().expect("operation service"));
     let manager = receipt_manager(operation_service);
@@ -365,4 +354,93 @@ async fn receipt_get_returns_not_found_for_missing_operation_id() {
     assert_eq!(err.kind, ToolErrorKind::NotFound);
     assert_eq!(err.code, "NOT_FOUND");
     assert!(err.message.contains("missing-op"));
+}
+
+#[tokio::test]
+async fn receipt_get_returns_unified_bundle_with_jobs_and_evidence() {
+    let _guard = ENV_LOCK.lock().await;
+    let temp_dir =
+        std::env::temp_dir().join(format!("infra-receipt-manager-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&temp_dir).expect("create temp dir");
+    let _db_guard = EnvGuard::set_path("INFRA_STORE_DB_PATH", &temp_dir.join("infra.db"));
+
+    let operation_service = Arc::new(OperationService::new().expect("operation service"));
+    let (manager, job_service) = receipt_manager_with_jobs(operation_service.clone());
+    let _ = job_service.upsert(serde_json::json!({
+        "job_id": "job-1",
+        "status": "succeeded",
+        "started_at": "2026-03-07T12:00:00Z",
+        "ended_at": "2026-03-07T12:01:00Z",
+        "artifacts": [{ "kind": "log", "path": "/tmp/job-1.log" }]
+    }));
+    persist_receipt(
+        operation_service.as_ref(),
+        "op-bundle",
+        "completed",
+        "2026-03-07T12:34:56Z",
+        serde_json::json!({
+            "action": "apply",
+            "success": true,
+            "job_ids": ["job-1"],
+            "verification": { "passed": true, "checks": [] },
+            "evidence_summary": { "success": true, "step_count": 1 },
+            "evidence_path": "/tmp/evidence.json",
+            "step_trace": [{ "capability": "deploy.apply", "success": true }],
+            "description_snapshot": { "hash": "abc123" }
+        }),
+    );
+
+    let result = manager
+        .handle_action(serde_json::json!({
+            "action": "get",
+            "operation_id": "op-bundle"
+        }))
+        .await
+        .expect("get bundled receipt");
+
+    let receipt = result.get("receipt").expect("receipt");
+    assert_eq!(
+        receipt
+            .get("job_outcomes")
+            .and_then(|v| v.as_array())
+            .map(|items| items.len()),
+        Some(1)
+    );
+    assert_eq!(
+        receipt
+            .pointer("/job_outcomes/0/status")
+            .and_then(|v| v.as_str()),
+        Some("completed")
+    );
+    assert_eq!(
+        receipt
+            .get("artifacts")
+            .and_then(|v| v.as_array())
+            .map(|items| items.len()),
+        Some(1)
+    );
+    assert_eq!(
+        receipt
+            .pointer("/verification/passed")
+            .and_then(|v| v.as_bool()),
+        Some(true)
+    );
+    assert_eq!(
+        receipt
+            .pointer("/evidence_summary/step_count")
+            .and_then(|v| v.as_u64()),
+        Some(1)
+    );
+    assert_eq!(
+        receipt
+            .pointer("/step_trace/0/capability")
+            .and_then(|v| v.as_str()),
+        Some("deploy.apply")
+    );
+    assert_eq!(
+        receipt
+            .pointer("/description_snapshot/hash")
+            .and_then(|v| v.as_str()),
+        Some("abc123")
+    );
 }

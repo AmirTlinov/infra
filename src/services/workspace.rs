@@ -453,7 +453,7 @@ impl WorkspaceService {
             }
             let call = if include_call {
                 Some(serde_json::json!({
-                    "tool": "mcp_workspace",
+                    "tool": "workspace",
                     "args": Value::Object(call_args),
                 }))
             } else {
@@ -503,7 +503,7 @@ impl WorkspaceService {
                     call_args.insert("confirm".to_string(), Value::Bool(true));
                 }
                 Some(serde_json::json!({
-                    "tool": "mcp_workspace",
+                    "tool": "workspace",
                     "args": Value::Object(call_args),
                 }))
             } else {
@@ -813,7 +813,7 @@ impl WorkspaceService {
                 warnings.push(serde_json::json!({
                     "code": "store_inside_repo",
                     "message": format!("Хранилище расположено внутри git-репозитория: {}", base),
-                    "action": { "tool": "mcp_workspace", "args": { "action": "store_status" } },
+                    "action": { "tool": "workspace", "args": { "action": "store_status" } },
                 }));
             }
         }
@@ -855,7 +855,7 @@ impl WorkspaceService {
         {
             hints.push(serde_json::json!({
                 "code": "no_runbooks",
-                "message": "Нет доступных runbook-ов. Добавьте через mcp_runbook."
+                "message": "Нет доступных runbook-ов. Добавьте их в runbooks.json или через infra runbook."
             }));
         }
 

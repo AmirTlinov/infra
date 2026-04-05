@@ -270,7 +270,7 @@ impl PipelineManager {
         let mut entry = serde_json::json!({
             "timestamp": chrono::Utc::now().to_rfc3339(),
             "status": if error.is_some() { "error" } else { "ok" },
-            "tool": "mcp_pipeline",
+            "tool": "pipeline",
             "action": stage,
             "trace_id": trace.trace_id,
             "span_id": uuid::Uuid::new_v4().to_string(),

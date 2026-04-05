@@ -3,7 +3,6 @@ use crate::utils::fs_atomic::path_exists;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, RwLock};
 
 const MARKERS: &[(&str, &[&str])] = &[
     ("node", &["package.json", "pnpm-lock.yaml", "yarn.lock"]),
@@ -45,16 +44,12 @@ const MARKERS: &[(&str, &[&str])] = &[
     ("ci", &[".github/workflows", "gitlab-ci.yml", "Jenkinsfile"]),
 ];
 
-#[derive(Clone)]
-pub struct ContextService {
-    cache: Arc<RwLock<HashMap<String, Value>>>,
-}
+#[derive(Clone, Default)]
+pub struct ContextService;
 
 impl ContextService {
     pub fn new() -> Result<Self, ToolError> {
-        Ok(Self {
-            cache: Arc::new(RwLock::new(HashMap::new())),
-        })
+        Ok(Self)
     }
 
     async fn detect_markers(&self, root: &Path) -> (HashMap<String, bool>, HashMap<String, bool>) {
@@ -148,12 +143,6 @@ impl ContextService {
             }
         });
 
-        if !refresh {
-            if let Some(existing) = self.cache.read().unwrap().get(&key).cloned() {
-                return Ok(serde_json::json!({"success": true, "context": existing}));
-            }
-        }
-
         let git_root = self.find_git_root(&cwd);
         let root = repo_root
             .as_ref()
@@ -177,7 +166,7 @@ impl ContextService {
             "updated_at": chrono::Utc::now().to_rfc3339(),
         });
 
-        self.cache.write().unwrap().insert(key, payload.clone());
+        let _ = refresh;
         Ok(serde_json::json!({"success": true, "context": payload}))
     }
 }

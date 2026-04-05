@@ -45,9 +45,9 @@ fn set_env(key: &str, value: &std::path::Path) {
 async fn runbook_write_requires_apply_and_irreversible_requires_confirm() {
     let _guard = ENV_LOCK.lock().await;
 
-    let prev_profiles = std::env::var("MCP_PROFILES_DIR").ok();
-    let prev_default_runbooks = std::env::var("MCP_DEFAULT_RUNBOOKS_PATH").ok();
-    let prev_runbooks = std::env::var("MCP_RUNBOOKS_PATH").ok();
+    let prev_profiles = std::env::var("INFRA_PROFILES_DIR").ok();
+    let prev_default_runbooks = std::env::var("INFRA_DEFAULT_RUNBOOKS_PATH").ok();
+    let prev_runbooks = std::env::var("INFRA_RUNBOOKS_PATH").ok();
 
     let tmp_dir = std::env::temp_dir().join(format!("infra-test-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&tmp_dir).expect("create temp dir");
@@ -71,9 +71,9 @@ async fn runbook_write_requires_apply_and_irreversible_requires_confirm() {
         }),
     );
 
-    set_env("MCP_PROFILES_DIR", &tmp_dir);
-    set_env("MCP_DEFAULT_RUNBOOKS_PATH", &runbooks_path);
-    set_env("MCP_RUNBOOKS_PATH", &runbooks_path);
+    set_env("INFRA_PROFILES_DIR", &tmp_dir);
+    set_env("INFRA_DEFAULT_RUNBOOKS_PATH", &runbooks_path);
+    set_env("INFRA_RUNBOOKS_PATH", &runbooks_path);
 
     let logger = Logger::new("test");
     let state_service = Arc::new(StateService::new().expect("state"));
@@ -147,17 +147,17 @@ async fn runbook_write_requires_apply_and_irreversible_requires_confirm() {
 
     assert_eq!(calls.load(Ordering::SeqCst), 2);
 
-    restore_env("MCP_RUNBOOKS_PATH", prev_runbooks);
-    restore_env("MCP_DEFAULT_RUNBOOKS_PATH", prev_default_runbooks);
-    restore_env("MCP_PROFILES_DIR", prev_profiles);
+    restore_env("INFRA_RUNBOOKS_PATH", prev_runbooks);
+    restore_env("INFRA_DEFAULT_RUNBOOKS_PATH", prev_default_runbooks);
+    restore_env("INFRA_PROFILES_DIR", prev_profiles);
 }
 
 #[tokio::test]
 async fn runbook_normal_mode_rejects_compatibility_paths_and_inline_payloads() {
     let _guard = ENV_LOCK.lock().await;
 
-    let prev_profiles = std::env::var("MCP_PROFILES_DIR").ok();
-    let prev_runbooks = std::env::var("MCP_RUNBOOKS_PATH").ok();
+    let prev_profiles = std::env::var("INFRA_PROFILES_DIR").ok();
+    let prev_runbooks = std::env::var("INFRA_RUNBOOKS_PATH").ok();
 
     let tmp_dir = std::env::temp_dir().join(format!("infra-test-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&tmp_dir).expect("create temp dir");
@@ -174,8 +174,8 @@ async fn runbook_normal_mode_rejects_compatibility_paths_and_inline_payloads() {
         }),
     );
 
-    set_env("MCP_PROFILES_DIR", &tmp_dir);
-    set_env("MCP_RUNBOOKS_PATH", &runbooks_path);
+    set_env("INFRA_PROFILES_DIR", &tmp_dir);
+    set_env("INFRA_RUNBOOKS_PATH", &runbooks_path);
 
     let logger = Logger::new("test");
     let state_service = Arc::new(StateService::new().expect("state"));
@@ -256,6 +256,82 @@ async fn runbook_normal_mode_rejects_compatibility_paths_and_inline_payloads() {
     );
     assert!(err.hint.as_deref().unwrap_or("").contains("runbooks.json"));
 
-    restore_env("MCP_RUNBOOKS_PATH", prev_runbooks);
-    restore_env("MCP_PROFILES_DIR", prev_profiles);
+    restore_env("INFRA_RUNBOOKS_PATH", prev_runbooks);
+    restore_env("INFRA_PROFILES_DIR", prev_profiles);
+}
+
+#[tokio::test]
+async fn runbook_read_effects_resolve_templates_before_apply_guard() {
+    let _guard = ENV_LOCK.lock().await;
+
+    let prev_profiles = std::env::var("INFRA_PROFILES_DIR").ok();
+    let prev_default_runbooks = std::env::var("INFRA_DEFAULT_RUNBOOKS_PATH").ok();
+    let prev_runbooks = std::env::var("INFRA_RUNBOOKS_PATH").ok();
+
+    let tmp_dir = std::env::temp_dir().join(format!("infra-test-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&tmp_dir).expect("create temp dir");
+
+    let runbooks_path = tmp_dir.join("runbooks.json");
+    write_json(
+        &runbooks_path,
+        &serde_json::json!({
+            "test.templated_read": {
+                "steps": [
+                    {
+                        "tool": "sql",
+                        "args": {
+                            "action": "query",
+                            "sql": "{{ input.sql }}"
+                        }
+                    }
+                ]
+            }
+        }),
+    );
+
+    set_env("INFRA_PROFILES_DIR", &tmp_dir);
+    set_env("INFRA_DEFAULT_RUNBOOKS_PATH", &runbooks_path);
+    set_env("INFRA_RUNBOOKS_PATH", &runbooks_path);
+
+    let logger = Logger::new("test");
+    let state_service = Arc::new(StateService::new().expect("state"));
+    let runbook_service = Arc::new(RunbookService::new().expect("runbook service"));
+
+    let calls = Arc::new(AtomicUsize::new(0));
+    let mut handlers: HashMap<String, Arc<dyn ToolHandler>> = HashMap::new();
+    handlers.insert(
+        "sql".to_string(),
+        Arc::new(DummyHandler {
+            calls: calls.clone(),
+        }),
+    );
+    let tool_executor = Arc::new(ToolExecutor::new(
+        logger.clone(),
+        state_service.clone(),
+        None,
+        None,
+        handlers,
+        HashMap::new(),
+    ));
+
+    let runbook_manager = RunbookManager::new(logger, runbook_service, state_service);
+    runbook_manager.set_tool_executor(tool_executor.clone());
+
+    let result = runbook_manager
+        .handle_action(serde_json::json!({
+            "action": "runbook_run",
+            "name": "test.templated_read",
+            "input": {
+                "sql": "SELECT 1"
+            }
+        }))
+        .await
+        .expect("templated read runbook should stay read-only");
+
+    assert_eq!(result.get("success").and_then(|v| v.as_bool()), Some(true));
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+
+    restore_env("INFRA_RUNBOOKS_PATH", prev_runbooks);
+    restore_env("INFRA_DEFAULT_RUNBOOKS_PATH", prev_default_runbooks);
+    restore_env("INFRA_PROFILES_DIR", prev_profiles);
 }

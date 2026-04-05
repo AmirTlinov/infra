@@ -3,19 +3,10 @@ from __future__ import annotations
 
 import argparse
 import json
-import re
 import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-
-
-SERVER_CONST_RE = re.compile(
-    r'const\s+(PROTOCOL_VERSION|SERVER_VERSION):\s*&str\s*=\s*"([^"]+)"'
-)
-SERVER_ENV_CONST_RE = re.compile(
-    r'const\s+(PROTOCOL_VERSION|SERVER_VERSION):\s*&str\s*=\s*env!\("([^"]+)"\)'
-)
 
 
 def _repo_root() -> Path:
@@ -44,37 +35,20 @@ def _git_status(root: Path) -> list[str]:
     return [line for line in proc.stdout.splitlines() if line.strip()]
 
 
-def _server_constants(server_rs: Path) -> dict[str, str]:
-    values: dict[str, str] = {}
-    text = server_rs.read_text(encoding="utf-8")
-    for match in SERVER_CONST_RE.finditer(text):
-        values[match.group(1)] = match.group(2)
-    for match in SERVER_ENV_CONST_RE.finditer(text):
-        values[match.group(1)] = f"env:{match.group(2)}"
-    return values
-
-
 def _cargo_package_version(cargo_toml: Path) -> str | None:
+    import re
+
     text = cargo_toml.read_text(encoding="utf-8")
     match = re.search(r'^\s*version\s*=\s*"([^"]+)"', text, re.MULTILINE)
     return match.group(1) if match else None
 
 
-def _tool_inventory(tool_catalog: list[dict[str, object]]) -> dict[str, object]:
-    names = [tool.get("name") for tool in tool_catalog if isinstance(tool.get("name"), str)]
-    alias_names = [name for name in names if isinstance(name, str) and not name.startswith("mcp_") and name not in {"help", "legend"}]
-    canonical = [
-        name
-        for name in names
-        if isinstance(name, str)
-        and (name.startswith("mcp_") or name in {"help", "legend"})
-    ]
+def _tool_inventory(tool_contracts: list[dict[str, object]]) -> dict[str, object]:
+    names = [tool.get("name") for tool in tool_contracts if isinstance(tool.get("name"), str)]
     return {
         "total": len(names),
-        "canonical_total": len(canonical),
-        "compat_alias_total": len(alias_names),
-        "canonical_names": canonical,
-        "compat_alias_names": alias_names,
+        "canonical_total": len(names),
+        "canonical_names": names,
     }
 
 
@@ -112,15 +86,11 @@ def _runbooks_inventory(path: Path) -> dict[str, object]:
 
 
 def build_baseline(root: Path) -> dict[str, object]:
-    tool_catalog = _read_json(root / "tool_catalog.json")
-    tool_catalog = tool_catalog if isinstance(tool_catalog, list) else []
-    server_consts = _server_constants(root / "src" / "mcp" / "server.rs")
+    tool_contracts = _read_json(root / "tool_contracts.json")
+    tool_contracts = tool_contracts if isinstance(tool_contracts, list) else []
     git_status = _git_status(root)
 
     cargo_version = _cargo_package_version(root / "Cargo.toml")
-    server_version = server_consts.get("SERVER_VERSION")
-    if server_version == "env:CARGO_PKG_VERSION":
-        server_version = cargo_version
 
     return {
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -132,10 +102,9 @@ def build_baseline(root: Path) -> dict[str, object]:
         },
         "versions": {
             "cargo_package": cargo_version,
-            "server_protocol": server_consts.get("PROTOCOL_VERSION"),
-            "server_version": server_version,
+            "cli_version": cargo_version,
         },
-        "tool_inventory": _tool_inventory(tool_catalog),
+        "tool_inventory": _tool_inventory(tool_contracts),
         "capabilities": _capabilities_inventory(root / "capabilities.json"),
         "runbooks": _runbooks_inventory(root / "runbooks.json"),
         "gate_surface": {

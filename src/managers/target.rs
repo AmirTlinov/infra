@@ -1,5 +1,7 @@
 use crate::errors::ToolError;
 use crate::services::logger::Logger;
+use crate::services::policy::PolicyService;
+use crate::services::profile::ProfileService;
 use crate::services::project::ProjectService;
 use crate::services::state::StateService;
 use crate::services::validation::Validation;
@@ -17,6 +19,8 @@ pub struct TargetManager {
     validation: Validation,
     project_service: Arc<ProjectService>,
     state_service: Arc<StateService>,
+    profile_service: Option<Arc<ProfileService>>,
+    policy_service: Option<Arc<PolicyService>>,
 }
 
 struct ActiveTargetResolution {
@@ -31,12 +35,16 @@ impl TargetManager {
         validation: Validation,
         project_service: Arc<ProjectService>,
         state_service: Arc<StateService>,
+        profile_service: Option<Arc<ProfileService>>,
+        policy_service: Option<Arc<PolicyService>>,
     ) -> Self {
         Self {
             logger: logger.child("target"),
             validation,
             project_service,
             state_service,
+            profile_service,
+            policy_service,
         }
     }
 
@@ -239,6 +247,181 @@ impl TargetManager {
         Ok((active.name, target, active.source, active.scope))
     }
 
+    fn profile_binding(
+        &self,
+        target: &Value,
+        key: &str,
+        expected_type: &str,
+        source_path: &str,
+    ) -> Value {
+        let Some(profile_name) = target.get(key).and_then(|value| value.as_str()) else {
+            return Value::Null;
+        };
+        let profile_name = profile_name.trim();
+        if profile_name.is_empty() {
+            return Value::Null;
+        }
+
+        let profile = self
+            .profile_service
+            .as_ref()
+            .and_then(|service| service.get_profile(profile_name, None).ok());
+
+        serde_json::json!({
+            "name": profile_name,
+            "expected_type": expected_type,
+            "source": source_path,
+            "exists": profile.is_some(),
+            "profile": profile.unwrap_or(Value::Null),
+        })
+    }
+
+    fn sourced_value(
+        &self,
+        target: &Value,
+        project: &Map<String, Value>,
+        target_field: &str,
+        project_field: &str,
+        target_source: &str,
+        project_source: &str,
+    ) -> Value {
+        if let Some(value) = target.get(target_field) {
+            if value
+                .as_str()
+                .map(|text| !text.trim().is_empty())
+                .unwrap_or(false)
+            {
+                return serde_json::json!({
+                    "value": value,
+                    "source": target_source,
+                });
+            }
+        }
+        if let Some(value) = project.get(project_field) {
+            if value
+                .as_str()
+                .map(|text| !text.trim().is_empty())
+                .unwrap_or(false)
+            {
+                return serde_json::json!({
+                    "value": value,
+                    "source": project_source,
+                });
+            }
+        }
+        Value::Null
+    }
+
+    fn resolved_policy(
+        &self,
+        project_name: &str,
+        target_name: &str,
+        project: &Map<String, Value>,
+        target: &Value,
+    ) -> Result<Value, ToolError> {
+        let Some(policy_service) = self.policy_service.as_ref() else {
+            return Ok(Value::Null);
+        };
+        let project_context = serde_json::json!({
+            "projectName": project_name,
+            "targetName": target_name,
+            "project": project,
+            "target": target,
+        });
+        let resolved = policy_service.resolve_effective_policy(
+            Some(&serde_json::json!({
+                "target": target,
+            })),
+            Some(&project_context),
+        )?;
+        Ok(serde_json::json!({
+            "policy": resolved.get("policy").cloned().unwrap_or(Value::Null),
+            "raw_policy": resolved.get("raw_policy").cloned().unwrap_or(Value::Null),
+            "source": resolved.get("resolved_from").cloned().unwrap_or(Value::Null),
+        }))
+    }
+
+    fn build_resolved_bindings(
+        &self,
+        project_name: &str,
+        target_name: &str,
+        project: &Map<String, Value>,
+        target: &Value,
+    ) -> Result<Value, ToolError> {
+        let target_source_base = format!("project.targets.{}", target_name);
+        let profiles = serde_json::json!({
+            "ssh": self.profile_binding(target, "ssh_profile", "ssh", format!("{}.ssh_profile", target_source_base).as_str()),
+            "env": self.profile_binding(target, "env_profile", "env", format!("{}.env_profile", target_source_base).as_str()),
+            "postgres": self.profile_binding(target, "postgres_profile", "postgresql", format!("{}.postgres_profile", target_source_base).as_str()),
+            "api": self.profile_binding(target, "api_profile", "api", format!("{}.api_profile", target_source_base).as_str()),
+            "vault": self.profile_binding(target, "vault_profile", "vault", format!("{}.vault_profile", target_source_base).as_str()),
+        });
+        let repo_root = self.sourced_value(
+            target,
+            project,
+            "repo_root",
+            "repo_root",
+            format!("{}.repo_root", target_source_base).as_str(),
+            "project.repo_root",
+        );
+        let cwd = self.sourced_value(
+            target,
+            project,
+            "cwd",
+            "cwd",
+            format!("{}.cwd", target_source_base).as_str(),
+            "project.cwd",
+        );
+        let kubeconfig = self.sourced_value(
+            target,
+            project,
+            "kubeconfig",
+            "kubeconfig",
+            format!("{}.kubeconfig", target_source_base).as_str(),
+            "project.kubeconfig",
+        );
+        let sops_age_key_file = self.sourced_value(
+            target,
+            project,
+            "sops_age_key_file",
+            "sops_age_key_file",
+            format!("{}.sops_age_key_file", target_source_base).as_str(),
+            "project.sops_age_key_file",
+        );
+        let api_base_url = self.sourced_value(
+            target,
+            project,
+            "api_base_url",
+            "api_base_url",
+            format!("{}.api_base_url", target_source_base).as_str(),
+            "project.api_base_url",
+        );
+        let registry_url = self.sourced_value(
+            target,
+            project,
+            "registry_url",
+            "registry_url",
+            format!("{}.registry_url", target_source_base).as_str(),
+            "project.registry_url",
+        );
+        let policy = self.resolved_policy(project_name, target_name, project, target)?;
+
+        Ok(serde_json::json!({
+            "profiles": profiles,
+            "paths": {
+                "repo_root": repo_root,
+                "cwd": cwd,
+                "kubeconfig": kubeconfig,
+                "sops_age_key_file": sops_age_key_file,
+            },
+            "addresses": {
+                "api_base_url": api_base_url,
+                "registry_url": registry_url,
+            },
+            "policy": policy,
+        }))
+    }
+
     pub async fn handle_action(&self, args: Value) -> Result<Value, ToolError> {
         let action = args.get("action");
         match action.and_then(|value| value.as_str()).unwrap_or("") {
@@ -306,12 +489,19 @@ impl TargetManager {
                     .filter(|value| !value.is_empty());
                 let (target_name, target, source, scope) =
                     self.resolve_target_record(&project_name, &project, explicit)?;
+                let resolved =
+                    self.build_resolved_bindings(&project_name, &target_name, &project, &target)?;
 
                 Ok(serde_json::json!({
                     "success": true,
                     "project": project_name,
+                    "target_name": target_name,
+                    "selection": {
+                        "source": source,
+                        "scope": scope,
+                    },
                     "target": self.build_target_record(&project_name, &project, &target_name, &target, Some(target_name.as_str())),
-                    "source": source,
+                    "resolved": resolved,
                     "scope": scope,
                 }))
             }

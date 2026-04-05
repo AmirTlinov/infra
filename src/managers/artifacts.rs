@@ -80,8 +80,7 @@ fn resolve_file_path(
     let context_root = resolve_context_root().ok_or_else(|| {
         ToolError::denied("Artifacts are unavailable (context repo root is not configured)")
             .with_hint(
-                "Set INFRA_CONTEXT_REPO_ROOT (or MCP_CONTEXT_REPO_ROOT) to a writable directory."
-                    .to_string(),
+                "Set INFRA_CONTEXT_REPO_ROOT to the repo root that owns artifacts.".to_string(),
             )
     })?;
     let artifact_rel = normalize_artifact_rel(uri, rel)?;
@@ -311,9 +310,8 @@ impl ArtifactManager {
         let context_root = resolve_context_root().ok_or_else(|| {
             ToolError::denied("Artifacts are unavailable (context repo root is not configured)")
                 .with_hint(
-                "Set INFRA_CONTEXT_REPO_ROOT (or MCP_CONTEXT_REPO_ROOT) to a writable directory."
-                    .to_string(),
-            )
+                    "Set INFRA_CONTEXT_REPO_ROOT to the repo root that owns artifacts.".to_string(),
+                )
         })?;
         let prefix = args
             .get("prefix")

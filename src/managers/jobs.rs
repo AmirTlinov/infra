@@ -2,6 +2,7 @@ use crate::errors::ToolError;
 use crate::services::job::JobService;
 use crate::services::logger::Logger;
 use crate::services::validation::Validation;
+use crate::tooling::names::canonical_tool_name;
 use crate::utils::tool_errors::unknown_action_error;
 use chrono::TimeZone;
 use serde_json::Value;
@@ -43,6 +44,15 @@ fn public_job_view(job: &Value) -> Value {
     if !job.is_object() {
         return Value::Null;
     }
+    let raw_status = job.get("status").and_then(|v| v.as_str()).unwrap_or("");
+    let status = match raw_status {
+        "queued" | "running" => "running",
+        "waiting_external" => "waiting_external",
+        "succeeded" | "completed" => "completed",
+        "failed" | "canceled" => "failed",
+        other if !other.is_empty() => other,
+        _ => "unknown",
+    };
     let expires = job
         .get("expires_at_ms")
         .and_then(|v| v.as_i64())
@@ -55,7 +65,8 @@ fn public_job_view(job: &Value) -> Value {
     serde_json::json!({
         "job_id": job.get("job_id").cloned().unwrap_or(Value::Null),
         "kind": job.get("kind").cloned().unwrap_or(Value::Null),
-        "status": job.get("status").cloned().unwrap_or(Value::Null),
+        "status": status,
+        "raw_status": job.get("status").cloned().unwrap_or(Value::Null),
         "trace_id": job.get("trace_id").cloned().unwrap_or(Value::Null),
         "parent_span_id": job.get("parent_span_id").cloned().unwrap_or(Value::Null),
         "created_at": job.get("created_at").cloned().unwrap_or(Value::Null),
@@ -100,14 +111,14 @@ impl JobManager {
     pub async fn handle_action(&self, args: Value) -> Result<Value, ToolError> {
         let action = args.get("action");
         match action.and_then(|v| v.as_str()).unwrap_or("") {
-            "job_status" => self.job_status(args).await,
-            "job_wait" => self.job_wait(args).await,
-            "job_logs_tail" => self.job_logs_tail(args).await,
-            "tail_job" => self.tail_job(args).await,
+            "job_status" | "status" => self.job_status(args).await,
+            "job_wait" | "wait" => self.job_wait(args).await,
+            "job_logs_tail" | "logs" => self.job_logs_tail(args).await,
+            "tail_job" | "tail" => self.tail_job(args).await,
             "follow_job" => self.follow_job(args).await,
-            "job_cancel" => self.job_cancel(args).await,
-            "job_forget" => self.job_forget(args).await,
-            "job_list" => self.job_list(args).await,
+            "job_cancel" | "cancel" => self.job_cancel(args).await,
+            "job_forget" | "forget" => self.job_forget(args).await,
+            "job_list" | "list" => self.job_list(args).await,
             _ => Err(unknown_action_error("job", action, JOB_ACTIONS)),
         }
     }
@@ -124,7 +135,8 @@ impl JobManager {
             .get("provider")
             .and_then(|v| v.get("tool"))
             .and_then(|v| v.as_str())
-            == Some("mcp_ssh_manager")
+            .map(canonical_tool_name)
+            == Some("ssh")
         {
             if let Some(ssh) = &self.ssh_manager {
                 let status = ssh.handle_action(args.clone()).await?;
@@ -174,7 +186,8 @@ impl JobManager {
             .get("provider")
             .and_then(|v| v.get("tool"))
             .and_then(|v| v.as_str())
-            == Some("mcp_ssh_manager")
+            .map(canonical_tool_name)
+            == Some("ssh")
         {
             if let Some(ssh) = &self.ssh_manager {
                 let wait = ssh.handle_action(args.clone()).await?;
@@ -258,7 +271,8 @@ impl JobManager {
             .get("provider")
             .and_then(|v| v.get("tool"))
             .and_then(|v| v.as_str())
-            == Some("mcp_ssh_manager")
+            .map(canonical_tool_name)
+            == Some("ssh")
         {
             if let Some(ssh) = &self.ssh_manager {
                 let logs = ssh.handle_action(args.clone()).await?;

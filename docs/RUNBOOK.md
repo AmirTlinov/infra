@@ -5,7 +5,7 @@ FAIL_CLOSED = A gate behavior: stop on drift, don’t “best-effort” correctn
 EFFECTS = Side-effect metadata for an action: `{ kind, requires_apply, irreversible }`.
 APPLY = The `apply=true` opt-in flag required for write/mixed [EFFECTS].
 CONFIRM = The `confirm=true` explicit acknowledgement required for irreversible [EFFECTS].
-RUNBOOK_MANIFEST = The file-backed `runbooks.json` manifest loaded from `MCP_RUNBOOKS_PATH` or `MCP_PROFILES_DIR`.
+RUNBOOK_MANIFEST = The file-backed `runbooks.json` manifest loaded from `INFRA_RUNBOOKS_PATH` or `INFRA_PROFILES_DIR`.
 
  [CONTENT]
 ## Debugging
@@ -16,7 +16,7 @@ RUNBOOK_MANIFEST = The file-backed `runbooks.json` manifest loaded from `MCP_RUN
 ## Local state
 
 - [STATE_DIR] defaults to an XDG state dir (for example `~/.local/state/infra`).
-- Set `MCP_PROFILES_DIR=/path/to/dir` to fully isolate profiles/state/projects/runbooks/capabilities.
+- Set `INFRA_PROFILES_DIR=/path/to/dir` to fully isolate profiles/state/projects/runbooks/capabilities.
 - Normal-mode runbook execution is manifest-backed from [RUNBOOK_MANIFEST]; edit that file instead of trying to mutate runbooks through the runtime API.
 
 ## Determinism

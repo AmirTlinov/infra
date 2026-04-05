@@ -6,7 +6,7 @@ use crate::utils::tool_errors::unknown_action_error;
 use serde_json::Value;
 use std::sync::Arc;
 
-pub(crate) const PROFILE_ACTIONS: &[&str] = &["list", "get"];
+pub(crate) const PROFILE_ACTIONS: &[&str] = &["list", "get", "set", "delete"];
 
 #[derive(Clone)]
 pub struct ProfileManager {
@@ -95,6 +95,33 @@ impl ProfileManager {
                 Ok(serde_json::json!({
                     "success": true,
                     "profile": profile,
+                }))
+            }
+            "set" => {
+                let name = self.resolve_profile_name(&args)?;
+                let mut config = args
+                    .get("profile")
+                    .cloned()
+                    .unwrap_or_else(|| Value::Object(Default::default()));
+                if let Value::Object(map) = &mut config {
+                    for field in ["type", "data", "secrets"] {
+                        if let Some(value) = args.get(field) {
+                            map.insert(field.to_string(), value.clone());
+                        }
+                    }
+                }
+                let updated = self.profile_service.set_profile(&name, &config)?;
+                Ok(serde_json::json!({
+                    "success": true,
+                    "profile": self.redact_profile(&name, &updated),
+                }))
+            }
+            "delete" => {
+                let name = self.resolve_profile_name(&args)?;
+                self.profile_service.delete_profile(&name)?;
+                Ok(serde_json::json!({
+                    "success": true,
+                    "profile": { "name": name },
                 }))
             }
             _ => Err(unknown_action_error("profile", action, PROFILE_ACTIONS)),

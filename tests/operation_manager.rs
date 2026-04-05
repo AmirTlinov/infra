@@ -53,10 +53,11 @@ fn set_env(key: &str, value: &std::path::Path) {
 async fn operation_plan_and_apply_flow_persist_receipts() {
     let _guard = ENV_LOCK.lock().await;
 
-    let prev_profiles = std::env::var("MCP_PROFILES_DIR").ok();
-    let prev_default_runbooks = std::env::var("MCP_DEFAULT_RUNBOOKS_PATH").ok();
-    let prev_default_capabilities = std::env::var("MCP_DEFAULT_CAPABILITIES_PATH").ok();
-    let prev_capabilities = std::env::var("MCP_CAPABILITIES_PATH").ok();
+    let prev_profiles = std::env::var("INFRA_PROFILES_DIR").ok();
+    let prev_default_runbooks = std::env::var("INFRA_DEFAULT_RUNBOOKS_PATH").ok();
+    let prev_default_capabilities = std::env::var("INFRA_DEFAULT_CAPABILITIES_PATH").ok();
+    let prev_capabilities = std::env::var("INFRA_CAPABILITIES_PATH").ok();
+    let prev_store_db = std::env::var("INFRA_STORE_DB_PATH").ok();
 
     let tmp_dir =
         std::env::temp_dir().join(format!("infra-operation-test-{}", uuid::Uuid::new_v4()));
@@ -125,10 +126,11 @@ async fn operation_plan_and_apply_flow_persist_receipts() {
         }),
     );
 
-    set_env("MCP_PROFILES_DIR", &tmp_dir);
-    set_env("MCP_DEFAULT_RUNBOOKS_PATH", &runbooks_path);
-    set_env("MCP_DEFAULT_CAPABILITIES_PATH", &capabilities_path);
-    std::env::remove_var("MCP_CAPABILITIES_PATH");
+    set_env("INFRA_PROFILES_DIR", &tmp_dir);
+    set_env("INFRA_STORE_DB_PATH", &tmp_dir.join("infra.db"));
+    set_env("INFRA_DEFAULT_RUNBOOKS_PATH", &runbooks_path);
+    set_env("INFRA_DEFAULT_CAPABILITIES_PATH", &capabilities_path);
+    std::env::remove_var("INFRA_CAPABILITIES_PATH");
 
     let logger = Logger::new("test");
     let validation = Validation::new();
@@ -180,6 +182,7 @@ async fn operation_plan_and_apply_flow_persist_receipts() {
         logger.clone(),
         validation,
         capability_service,
+        runbook_service.clone(),
         Some(context_service),
         intent_manager,
         operation_service.clone(),
@@ -308,7 +311,7 @@ async fn operation_plan_and_apply_flow_persist_receipts() {
             .get("operation")
             .and_then(|v| v.get("status"))
             .and_then(|v| v.as_str()),
-        Some("succeeded")
+        Some("completed")
     );
     assert_eq!(
         applied
@@ -374,6 +377,13 @@ async fn operation_plan_and_apply_flow_persist_receipts() {
             .map(|items| items.len()),
         Some(2)
     );
+    assert!(applied
+        .get("operation")
+        .and_then(|v| v.get("description_snapshot"))
+        .and_then(|v| v.get("hash"))
+        .and_then(|v| v.as_str())
+        .map(|value| !value.is_empty())
+        .unwrap_or(false));
     assert_eq!(
         applied
             .get("operation")
@@ -436,10 +446,11 @@ async fn operation_plan_and_apply_flow_persist_receipts() {
         .unwrap_or(false));
     assert!(Arc::strong_count(&tool_executor) >= 1);
 
-    restore_env("MCP_CAPABILITIES_PATH", prev_capabilities);
-    restore_env("MCP_DEFAULT_CAPABILITIES_PATH", prev_default_capabilities);
-    restore_env("MCP_DEFAULT_RUNBOOKS_PATH", prev_default_runbooks);
-    restore_env("MCP_PROFILES_DIR", prev_profiles);
+    restore_env("INFRA_CAPABILITIES_PATH", prev_capabilities);
+    restore_env("INFRA_STORE_DB_PATH", prev_store_db);
+    restore_env("INFRA_DEFAULT_CAPABILITIES_PATH", prev_default_capabilities);
+    restore_env("INFRA_DEFAULT_RUNBOOKS_PATH", prev_default_runbooks);
+    restore_env("INFRA_PROFILES_DIR", prev_profiles);
     std::fs::remove_dir_all(&tmp_dir).ok();
 }
 
@@ -447,10 +458,11 @@ async fn operation_plan_and_apply_flow_persist_receipts() {
 async fn operation_plan_prefers_project_capability_manifest_over_default_manifest() {
     let _guard = ENV_LOCK.lock().await;
 
-    let prev_profiles = std::env::var("MCP_PROFILES_DIR").ok();
-    let prev_capabilities = std::env::var("MCP_CAPABILITIES_PATH").ok();
-    let prev_default_capabilities = std::env::var("MCP_DEFAULT_CAPABILITIES_PATH").ok();
-    let prev_default_runbooks = std::env::var("MCP_DEFAULT_RUNBOOKS_PATH").ok();
+    let prev_profiles = std::env::var("INFRA_PROFILES_DIR").ok();
+    let prev_capabilities = std::env::var("INFRA_CAPABILITIES_PATH").ok();
+    let prev_default_capabilities = std::env::var("INFRA_DEFAULT_CAPABILITIES_PATH").ok();
+    let prev_default_runbooks = std::env::var("INFRA_DEFAULT_RUNBOOKS_PATH").ok();
+    let prev_store_db = std::env::var("INFRA_STORE_DB_PATH").ok();
 
     let tmp_dir =
         std::env::temp_dir().join(format!("infra-operation-test-{}", uuid::Uuid::new_v4()));
@@ -507,10 +519,14 @@ async fn operation_plan_prefers_project_capability_manifest_over_default_manifes
         }),
     );
 
-    set_env("MCP_PROFILES_DIR", &tmp_dir);
-    set_env("MCP_DEFAULT_RUNBOOKS_PATH", &runbooks_path);
-    set_env("MCP_DEFAULT_CAPABILITIES_PATH", &default_capabilities_path);
-    set_env("MCP_CAPABILITIES_PATH", &project_capabilities_path);
+    set_env("INFRA_PROFILES_DIR", &tmp_dir);
+    set_env("INFRA_STORE_DB_PATH", &tmp_dir.join("infra.db"));
+    set_env("INFRA_DEFAULT_RUNBOOKS_PATH", &runbooks_path);
+    set_env(
+        "INFRA_DEFAULT_CAPABILITIES_PATH",
+        &default_capabilities_path,
+    );
+    set_env("INFRA_CAPABILITIES_PATH", &project_capabilities_path);
 
     let logger = Logger::new("test");
     let validation = Validation::new();
@@ -532,7 +548,7 @@ async fn operation_plan_prefers_project_capability_manifest_over_default_manifes
         security,
         validation.clone(),
         capability_service.clone(),
-        runbook_service,
+        runbook_service.clone(),
         evidence_service,
         state_service.clone(),
         None,
@@ -562,6 +578,7 @@ async fn operation_plan_prefers_project_capability_manifest_over_default_manifes
         logger,
         validation,
         capability_service,
+        runbook_service.clone(),
         Some(context_service),
         intent_manager,
         operation_service,
@@ -626,9 +643,147 @@ async fn operation_plan_prefers_project_capability_manifest_over_default_manifes
         Some(project_capabilities_path.to_string_lossy().as_ref())
     );
 
-    restore_env("MCP_DEFAULT_RUNBOOKS_PATH", prev_default_runbooks);
-    restore_env("MCP_DEFAULT_CAPABILITIES_PATH", prev_default_capabilities);
-    restore_env("MCP_CAPABILITIES_PATH", prev_capabilities);
-    restore_env("MCP_PROFILES_DIR", prev_profiles);
+    restore_env("INFRA_DEFAULT_RUNBOOKS_PATH", prev_default_runbooks);
+    restore_env("INFRA_DEFAULT_CAPABILITIES_PATH", prev_default_capabilities);
+    restore_env("INFRA_CAPABILITIES_PATH", prev_capabilities);
+    restore_env("INFRA_STORE_DB_PATH", prev_store_db);
+    restore_env("INFRA_PROFILES_DIR", prev_profiles);
+    std::fs::remove_dir_all(&tmp_dir).ok();
+}
+
+#[tokio::test]
+async fn operation_status_stays_waiting_external_until_job_completes() {
+    let _guard = ENV_LOCK.lock().await;
+
+    let prev_profiles = std::env::var("INFRA_PROFILES_DIR").ok();
+    let prev_store_db = std::env::var("INFRA_STORE_DB_PATH").ok();
+
+    let tmp_dir =
+        std::env::temp_dir().join(format!("infra-operation-status-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&tmp_dir).expect("create temp dir");
+    set_env("INFRA_PROFILES_DIR", &tmp_dir);
+    set_env("INFRA_STORE_DB_PATH", &tmp_dir.join("infra.db"));
+
+    let logger = Logger::new("test");
+    let validation = Validation::new();
+    let security = Arc::new(Security::new().expect("security"));
+    let state_service = Arc::new(StateService::new().expect("state"));
+    let context_service = Arc::new(ContextService::new().expect("context"));
+    let capability_service =
+        Arc::new(CapabilityService::new(security.clone()).expect("capability service"));
+    let runbook_service = Arc::new(RunbookService::new().expect("runbook service"));
+    let evidence_service = Arc::new(EvidenceService::new(
+        logger.clone(),
+        security.as_ref().clone(),
+    ));
+    let operation_service = Arc::new(OperationService::new().expect("operation service"));
+    let job_service = Arc::new(JobService::new(logger.clone()).expect("job service"));
+    let intent_manager = Arc::new(IntentManager::new(
+        logger.clone(),
+        security,
+        validation.clone(),
+        capability_service.clone(),
+        runbook_service.clone(),
+        evidence_service,
+        state_service,
+        None,
+        Some(context_service.clone()),
+        None,
+    ));
+    let operation_manager = OperationManager::new(
+        logger.clone(),
+        validation,
+        capability_service,
+        runbook_service,
+        Some(context_service),
+        intent_manager,
+        operation_service.clone(),
+        job_service.clone(),
+    );
+
+    operation_service
+        .upsert(
+            "op-job",
+            &serde_json::json!({
+                "operation_id": "op-job",
+                "status": "completed",
+                "success": true,
+                "action": "apply",
+                "job_ids": ["job-1"],
+                "updated_at": "2026-04-05T10:00:00Z",
+                "effects": { "kind": "write", "requires_apply": true, "irreversible": false }
+            }),
+        )
+        .expect("persist operation");
+    let _ = job_service.upsert(serde_json::json!({
+        "job_id": "job-1",
+        "status": "running",
+        "started_at": "2026-04-05T10:00:01Z",
+        "updated_at": "2026-04-05T10:00:02Z",
+        "artifacts": [{ "kind": "log", "path": "/tmp/job-1.log" }]
+    }));
+
+    let waiting = operation_manager
+        .handle_action(serde_json::json!({
+            "action": "status",
+            "operation_id": "op-job"
+        }))
+        .await
+        .expect("waiting status");
+    assert_eq!(
+        waiting
+            .pointer("/operation/status")
+            .and_then(|v| v.as_str()),
+        Some("waiting_external")
+    );
+    assert_eq!(
+        waiting
+            .pointer("/operation/success")
+            .and_then(|v| v.as_bool()),
+        Some(false)
+    );
+    assert_eq!(
+        waiting
+            .pointer("/operation/job_outcomes/0/status")
+            .and_then(|v| v.as_str()),
+        Some("running")
+    );
+
+    let _ = job_service.upsert(serde_json::json!({
+        "job_id": "job-1",
+        "status": "succeeded",
+        "started_at": "2026-04-05T10:00:01Z",
+        "ended_at": "2026-04-05T10:00:03Z",
+        "updated_at": "2026-04-05T10:00:03Z",
+        "artifacts": [{ "kind": "log", "path": "/tmp/job-1.log" }]
+    }));
+    let completed = operation_manager
+        .handle_action(serde_json::json!({
+            "action": "status",
+            "operation_id": "op-job"
+        }))
+        .await
+        .expect("completed status");
+    assert_eq!(
+        completed
+            .pointer("/operation/status")
+            .and_then(|v| v.as_str()),
+        Some("completed")
+    );
+    assert_eq!(
+        completed
+            .pointer("/operation/success")
+            .and_then(|v| v.as_bool()),
+        Some(true)
+    );
+    assert_eq!(
+        completed
+            .pointer("/operation/job_outcomes/0/status")
+            .and_then(|v| v.as_str()),
+        Some("completed")
+    );
+
+    restore_env("INFRA_STORE_DB_PATH", prev_store_db);
+    restore_env("INFRA_PROFILES_DIR", prev_profiles);
     std::fs::remove_dir_all(&tmp_dir).ok();
 }

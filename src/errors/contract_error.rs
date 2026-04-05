@@ -21,12 +21,12 @@ impl ErrorCode {
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct McpError {
+pub struct ContractError {
     pub code: ErrorCode,
     pub message: String,
 }
 
-impl McpError {
+impl ContractError {
     pub fn new(code: ErrorCode, message: impl Into<String>) -> Self {
         Self {
             code,
@@ -35,10 +35,10 @@ impl McpError {
     }
 }
 
-impl fmt::Display for McpError {
+impl fmt::Display for ContractError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.message)
     }
 }
 
-impl std::error::Error for McpError {}
+impl std::error::Error for ContractError {}

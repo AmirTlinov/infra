@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 const RUNBOOK_SOURCE: &str = "manifest";
 const FILE_BACKED_MANIFEST_SOURCE: &str = "file_backed_manifest";
 const BUNDLED_MANIFEST_SOURCE: &str = "bundled_manifest";
+const UNCONFIGURED_MANIFEST_SOURCE: &str = "unconfigured_manifest";
 
 #[derive(Clone)]
 pub struct RunbookService {
@@ -28,6 +29,38 @@ impl RunbookService {
 
     pub fn manifest_path(&self) -> &Path {
         self.manifest_path.as_path()
+    }
+
+    pub fn manifest_metadata(&self) -> Value {
+        let manifests = self.manifest_runbooks().unwrap_or_default();
+        let project_manifest = manifests.values().find_map(|(runbook, _)| {
+            let source = runbook
+                .get("source")
+                .and_then(|value| value.as_str())
+                .unwrap_or("");
+            if source == "manifest" {
+                Some(runbook.clone())
+            } else {
+                None
+            }
+        });
+        let fallback_manifest = manifests
+            .values()
+            .next()
+            .map(|(runbook, _)| runbook.clone());
+        let manifest = project_manifest
+            .or(fallback_manifest)
+            .unwrap_or(Value::Null);
+
+        serde_json::json!({
+            "manifest_path": manifest.get("manifest_path").cloned().unwrap_or(Value::Null),
+            "manifest_source": manifest
+                .get("manifest_source")
+                .cloned()
+                .unwrap_or(Value::String(UNCONFIGURED_MANIFEST_SOURCE.to_string())),
+            "manifest_version": manifest.get("manifest_version").cloned().unwrap_or(Value::Null),
+            "manifest_sha256": manifest.get("manifest_sha256").cloned().unwrap_or(Value::Null),
+        })
     }
 
     fn read_runbooks_map(path: &Path, source: &str) -> Result<HashMap<String, Value>, ToolError> {

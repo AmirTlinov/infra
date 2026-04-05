@@ -2,7 +2,7 @@ pub mod network {
     pub const POSTGRES_DEFAULT_PORT: u16 = 5432;
     pub const SSH_DEFAULT_PORT: u16 = 22;
     pub const TIMEOUT_SSH_READY_MS: u64 = 10_000;
-    pub const TIMEOUT_MCP_TOOL_CALL_MS: u64 = 55_000;
+    pub const TIMEOUT_TOOL_CALL_MS: u64 = 55_000;
     pub const TIMEOUT_SSH_EXEC_DEFAULT_MS: u64 = 45_000;
     pub const TIMEOUT_SSH_EXEC_HARD_GRACE_MS: u64 = 2_000;
     pub const TIMEOUT_SSH_DETACHED_START_MS: u64 = 20_000;

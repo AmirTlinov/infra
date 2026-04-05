@@ -4,20 +4,15 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import selectors
-import shutil
 import socket
 import subprocess
 import sys
 import tempfile
 import time
-from dataclasses import dataclass
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
-
-PROTOCOL_VERSION = "2025-06-18"
 SSH_READY_TIMEOUT_S = 20.0
 SSH_SMOKE_IMAGE = "catthehacker/ubuntu:act-latest"
 
@@ -113,167 +108,6 @@ def _wait_postgres_ready(container_id: str, *, timeout_s: float) -> None:
     raise TimeoutError("timeout waiting for postgres readiness")
 
 
-def _rss_kb(pid: int) -> int:
-    try:
-        raw = Path(f"/proc/{pid}/status").read_text(encoding="utf-8")
-    except Exception:
-        return -1
-    for line in raw.splitlines():
-        if line.startswith("VmRSS:"):
-            parts = line.split()
-            if len(parts) >= 2 and parts[1].isdigit():
-                return int(parts[1])
-    return -1
-
-
-@dataclass
-class Spawned:
-    name: str
-    proc: subprocess.Popen[str]
-    selector: selectors.BaseSelector
-    stderr_tail: list[str]
-
-    def send(self, payload: dict[str, Any]) -> None:
-        wire = json.dumps(payload, separators=(",", ":"), sort_keys=True) + "\n"
-        if self.proc.stdin is None:
-            raise RuntimeError(f"{self.name}: stdin is closed")
-        self.proc.stdin.write(wire)
-        self.proc.stdin.flush()
-
-    def recv(self, *, timeout_s: float) -> dict[str, Any]:
-        if self.proc.stdout is None:
-            raise RuntimeError(f"{self.name}: stdout is closed")
-        deadline = time.time() + timeout_s
-        while time.time() < deadline:
-            if self.proc.poll() is not None:
-                tail = "\n".join(self.stderr_tail[-20:])
-                raise RuntimeError(
-                    f"{self.name}: process exited early (rc={self.proc.returncode})\n{tail}"
-                )
-            for key, _ in self.selector.select(timeout=0.05):
-                if key.fileobj is self.proc.stdout:
-                    raw = self.proc.stdout.readline()
-                    if not raw:
-                        continue
-                    line = raw.strip()
-                    if not line:
-                        continue
-                    data = json.loads(line)
-                    if not isinstance(data, dict):
-                        raise RuntimeError(f"{self.name}: expected JSON object, got {type(data)}")
-                    return data
-                if self.proc.stderr is not None and key.fileobj is self.proc.stderr:
-                    raw = self.proc.stderr.readline()
-                    if raw:
-                        self.stderr_tail.append(raw.rstrip("\n"))
-                        self.stderr_tail[:] = self.stderr_tail[-60:]
-        tail = "\n".join(self.stderr_tail[-20:])
-        raise TimeoutError(f"{self.name}: timeout waiting for response\n{tail}")
-
-    def expect_no_response(self, *, quiet_for_s: float) -> None:
-        if self.proc.stdout is None:
-            return
-        deadline = time.time() + quiet_for_s
-        while time.time() < deadline:
-            if self.proc.poll() is not None:
-                tail = "\n".join(self.stderr_tail[-20:])
-                raise RuntimeError(
-                    f"{self.name}: process exited while expecting silence (rc={self.proc.returncode})\n{tail}"
-                )
-            for key, _ in self.selector.select(timeout=0.05):
-                if key.fileobj is self.proc.stdout:
-                    raw = self.proc.stdout.readline()
-                    if raw.strip():
-                        tail = "\n".join(self.stderr_tail[-20:])
-                        raise RuntimeError(
-                            f"{self.name}: expected no response, but got stdout: {raw.strip()!r}\n{tail}"
-                        )
-                if self.proc.stderr is not None and key.fileobj is self.proc.stderr:
-                    raw = self.proc.stderr.readline()
-                    if raw:
-                        self.stderr_tail.append(raw.rstrip("\n"))
-                        self.stderr_tail[:] = self.stderr_tail[-60:]
-
-    def terminate(self) -> None:
-        self.proc.terminate()
-        try:
-            self.proc.wait(timeout=3)
-        except subprocess.TimeoutExpired:
-            self.proc.kill()
-
-
-def _spawn_rust(root: Path, *, env: dict[str, str], profile: str) -> Spawned:
-    rust_bin = root / "target" / profile / "infra"
-    if sys.platform == "win32":
-        rust_bin = rust_bin.with_suffix(".exe")
-    build_cmd = ["cargo", "build"]
-    if profile == "release":
-        build_cmd.append("--release")
-    subprocess.run(build_cmd, cwd=str(root), check=True)
-    proc = subprocess.Popen(
-        [str(rust_bin)],
-        cwd=str(root),
-        env=env,
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        bufsize=1,
-    )
-    sel = selectors.DefaultSelector()
-    assert proc.stdout is not None
-    sel.register(proc.stdout, selectors.EVENT_READ)
-    if proc.stderr is not None:
-        sel.register(proc.stderr, selectors.EVENT_READ)
-    return Spawned(name="rust", proc=proc, selector=sel, stderr_tail=[])
-
-
-def _handshake(client: Spawned) -> None:
-    client.send(
-        {
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "initialize",
-            "params": {
-                "protocolVersion": PROTOCOL_VERSION,
-                "capabilities": {},
-                "clientInfo": {"name": "infra-smoke", "version": "0"},
-            },
-        }
-    )
-    response = client.recv(timeout_s=5.0)
-    if response.get("id") != 1 or response.get("error") is not None:
-        raise RuntimeError(f"initialize failed: {response!r}")
-    client.send({"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}})
-    client.expect_no_response(quiet_for_s=0.25)
-
-
-def _tools_call_envelope(
-    client: Spawned, *, call_id: int, name: str, arguments: dict[str, Any]
-) -> dict[str, Any]:
-    client.send(
-        {
-            "jsonrpc": "2.0",
-            "id": call_id,
-            "method": "tools/call",
-            "params": {"name": name, "arguments": arguments},
-        }
-    )
-    response = client.recv(timeout_s=60.0)
-    if response.get("id") != call_id or response.get("error") is not None:
-        raise RuntimeError(f"tools/call({name}) failed: {response!r}")
-    result = response.get("result")
-    if not isinstance(result, dict):
-        raise RuntimeError(f"tools/call({name}): result must be object")
-    content = result.get("content")
-    if not isinstance(content, list) or not content:
-        raise RuntimeError(f"tools/call({name}): missing content array")
-    for item in content:
-        if isinstance(item, dict) and item.get("type") == "text" and isinstance(item.get("text"), str):
-            return json.loads(item["text"])
-    raise RuntimeError(f"tools/call({name}): missing text content")
-
-
 def _start_http_server(directory: Path) -> tuple[ThreadingHTTPServer, int]:
     class QuietHandler(SimpleHTTPRequestHandler):
         def log_message(self, format: str, *args: object) -> None:  # noqa: A002
@@ -283,36 +117,101 @@ def _start_http_server(directory: Path) -> tuple[ThreadingHTTPServer, int]:
         *args, directory=str(directory), **kwargs
     )
     server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
-    host, port = server.server_address
+    _, port = server.server_address
 
     import threading
 
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     _wait_tcp("127.0.0.1", int(port), timeout_s=2.0)
-    return (server, int(port))
+    return server, int(port)
+
+
+def _binary_path(root: Path, profile: str) -> Path:
+    build_cmd = ["cargo", "build"]
+    bin_dir = root / "target" / "debug"
+    if profile == "release":
+        build_cmd.append("--release")
+        bin_dir = root / "target" / "release"
+    subprocess.run(build_cmd, cwd=str(root), check=True)
+    binary = bin_dir / "infra"
+    if sys.platform == "win32":
+        binary = binary.with_suffix(".exe")
+    if not binary.exists():
+        raise RuntimeError(f"built binary missing: {binary}")
+    return binary
+
+
+def _cli(
+    binary: Path,
+    *,
+    cwd: Path,
+    env: dict[str, str],
+    args: list[str],
+    expect_exit: int = 0,
+) -> dict[str, Any]:
+    proc = subprocess.run(
+        [str(binary), *args],
+        cwd=str(cwd),
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    stdout = proc.stdout.strip()
+    stderr = proc.stderr.strip()
+    payload: dict[str, Any] | None = None
+    if stdout:
+        try:
+            payload = json.loads(stdout)
+        except json.JSONDecodeError as err:
+            raise RuntimeError(
+                f"infra {' '.join(args)} returned non-JSON stdout:\n{stdout}\n\nstderr:\n{stderr}"
+            ) from err
+    if proc.returncode != expect_exit:
+        raise RuntimeError(
+            f"infra {' '.join(args)} exited rc={proc.returncode} (expected {expect_exit})\n"
+            f"stdout:\n{stdout}\n\nstderr:\n{stderr}"
+        )
+    if payload is None or not isinstance(payload, dict):
+        raise RuntimeError(f"infra {' '.join(args)} returned empty or invalid JSON payload")
+    return payload
+
+
+def _require(condition: bool, message: str) -> None:
+    if not condition:
+        raise RuntimeError(message)
+
+
+def _json_arg(value: Any) -> str:
+    return json.dumps(value, separators=(",", ":"))
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Infra — docker-backed smoke test.")
-    parser.add_argument("--load-n", type=int, default=400, help="Number of help() calls for load smoke.")
+    parser = argparse.ArgumentParser(description="Infra — docker-backed CLI smoke test.")
+    parser.add_argument(
+        "--load-n",
+        type=int,
+        default=50,
+        help="Number of `infra describe status` calls for the lightweight load loop.",
+    )
     parser.add_argument(
         "--profile",
         choices=("release", "debug"),
         default="release",
-        help="Infra build profile to smoke; default validates the installed release path.",
+        help="Infra build profile to smoke; default validates the release binary path.",
     )
     args = parser.parse_args()
 
     root = _repo_root()
 
-    # Ensure docker exists early.
     subprocess.run(["docker", "--version"], check=True, stdout=subprocess.DEVNULL)
     _ensure_docker_daemon()
+    binary = _binary_path(root, args.profile)
+
     pg_id = ""
     ssh_id = ""
-    pg_socket_dir = tempfile.mkdtemp(prefix="infra-smoke-pgsock-")
     http_server: ThreadingHTTPServer | None = None
+    pg_socket_dir = tempfile.mkdtemp(prefix="infra-smoke-pgsock-")
     try:
         ssh_port = _reserve_local_port()
         ssh_id = _docker(
@@ -363,137 +262,212 @@ def main() -> int:
             http_dir = Path(http_dir_raw)
             (http_dir / "index.html").write_text("hello from infra-smoke\n", encoding="utf-8")
             http_server, http_port = _start_http_server(http_dir)
-            http_url = f"http://127.0.0.1:{http_port}/index.html"
+            http_base_url = f"http://127.0.0.1:{http_port}"
 
             env = os.environ.copy()
-            env["MCP_PROFILES_DIR"] = state_dir
+            env["INFRA_PROFILES_DIR"] = state_dir
             env["INFRA_CONTEXT_REPO_ROOT"] = ctx_dir
             env["INFRA_TOOL_TIER"] = "expert"
             env.pop("INFRA_UNSAFE_LOCAL", None)
 
-            client = _spawn_rust(root, env=env, profile=args.profile)
-            try:
-                _handshake(client)
+            describe = _cli(binary, cwd=root, env=env, args=["describe", "status"])
+            _require(describe.get("state") == "ready", f"describe status failed: {describe!r}")
+            _require(
+                isinstance(describe.get("description_snapshot"), dict),
+                f"description_snapshot missing: {describe!r}",
+            )
 
-                # Artifacts: proof that get/head/tail/list path is reachable.
-                help_env = _tools_call_envelope(
-                    client,
-                    call_id=10,
-                    name="help",
-                    arguments={"trace_id": "infra-smoke", "response_mode": "ai"},
-                )
-                artifact_uri = help_env.get("artifact_uri_json")
-                if not isinstance(artifact_uri, str) or not artifact_uri.startswith("artifact://"):
-                    raise RuntimeError(f"help() did not return artifact_uri_json: {help_env!r}")
-                art_env = _tools_call_envelope(
-                    client,
-                    call_id=11,
-                    name="mcp_artifacts",
-                    arguments={
-                        "action": "get",
-                        "uri": artifact_uri,
-                        "encoding": "utf8",
-                        "max_bytes": 2048,
-                        "trace_id": "sf-smoke",
-                        "response_mode": "ai",
-                    },
-                )
-                if art_env.get("success") is not True:
-                    raise RuntimeError(f"artifacts get failed: {art_env!r}")
+            _cli(
+                binary,
+                cwd=root,
+                env=env,
+                args=[
+                    "profile",
+                    "set",
+                    "--arg",
+                    "name=smoke-ssh",
+                    "--json",
+                    _json_arg(
+                        {
+                            "profile": {
+                                "type": "ssh",
+                                "data": {
+                                    "host": "127.0.0.1",
+                                    "port": ssh_port,
+                                    "username": "root",
+                                    "host_key_policy": "accept",
+                                },
+                                "secrets": {"password": "root"},
+                            }
+                        }
+                    ),
+                ],
+            )
+            _cli(
+                binary,
+                cwd=root,
+                env=env,
+                args=[
+                    "profile",
+                    "set",
+                    "--arg",
+                    "name=smoke-api",
+                    "--json",
+                    _json_arg(
+                        {
+                            "profile": {
+                                "type": "api",
+                                "data": {"base_url": http_base_url},
+                            }
+                        }
+                    ),
+                ],
+            )
+            _cli(
+                binary,
+                cwd=root,
+                env=env,
+                args=[
+                    "profile",
+                    "set",
+                    "--arg",
+                    "name=smoke-postgres",
+                    "--json",
+                    _json_arg(
+                        {
+                            "profile": {
+                                "type": "postgresql",
+                                "data": {
+                                    "host": pg_socket_dir,
+                                    "port": 5432,
+                                    "user": "infrauser",
+                                    "dbname": "infradb",
+                                },
+                                "secrets": {"password": "infrapass"},
+                            }
+                        }
+                    ),
+                ],
+            )
+            _cli(
+                binary,
+                cwd=root,
+                env=env,
+                args=[
+                    "project",
+                    "set",
+                    "--arg",
+                    "name=smoke",
+                    "--json",
+                    _json_arg(
+                        {
+                            "project": {
+                                "description": "docker-backed smoke fixture",
+                                "default_target": "prod",
+                                "targets": {
+                                    "prod": {
+                                        "ssh_profile": "smoke-ssh",
+                                        "postgres_profile": "smoke-postgres",
+                                        "api_profile": "smoke-api",
+                                        "repo_root": ctx_dir,
+                                        "cwd": "/srv/smoke",
+                                        "api_base_url": http_base_url,
+                                    }
+                                },
+                            }
+                        }
+                    ),
+                ],
+            )
 
-                # API: local HTTP request.
-                api_env = _tools_call_envelope(
-                    client,
-                    call_id=12,
-                    name="mcp_api_client",
-                    arguments={
-                        "action": "smoke_http",
-                        "url": http_url,
-                        "expect_code": 200,
-                        "timeout_ms": 5000,
-                        "trace_id": "sf-smoke",
-                        "response_mode": "ai",
-                    },
-                )
-                if api_env.get("success") is not True:
-                    raise RuntimeError(f"api smoke_http failed: {api_env!r}")
+            target = _cli(
+                binary,
+                cwd=root,
+                env=env,
+                args=["target", "resolve", "--arg", "project=smoke", "--arg", "name=prod"],
+            )
+            resolved = target.get("result", {}).get("resolved", {})
+            _require(target.get("state") == "completed", f"target resolve failed: {target!r}")
+            _require(
+                resolved.get("profiles", {}).get("ssh", {}).get("name") == "smoke-ssh",
+                f"resolved ssh profile missing: {target!r}",
+            )
+            _require(
+                resolved.get("profiles", {}).get("postgres", {}).get("name") == "smoke-postgres",
+                f"resolved postgres profile missing: {target!r}",
+            )
+            _require(
+                resolved.get("profiles", {}).get("api", {}).get("name") == "smoke-api",
+                f"resolved api profile missing: {target!r}",
+            )
+            _require(
+                resolved.get("paths", {}).get("repo_root", {}).get("value") == ctx_dir,
+                f"resolved repo_root missing: {target!r}",
+            )
 
-                # Postgres: basic query.
-                pg_env = _tools_call_envelope(
-                    client,
-                    call_id=13,
-                    name="mcp_psql_manager",
-                    arguments={
-                        "action": "query",
-                        "connection": {
-                            "host": pg_socket_dir,
-                            "port": 5432,
-                            "user": "infrauser",
-                            "dbname": "infradb",
-                        },
-                        "sql": "select 1 as x",
-                        "timeout_ms": 5000,
-                        "trace_id": "sf-smoke",
-                        "response_mode": "ai",
-                    },
-                )
-                if pg_env.get("success") is not True:
-                    raise RuntimeError(f"psql query failed: {pg_env!r}")
+            operation = _cli(
+                binary,
+                cwd=root,
+                env=env,
+                args=[
+                    "operation",
+                    "observe",
+                    "--arg",
+                    "capability=smoke.target.baseline",
+                    "--arg",
+                    "project=smoke",
+                    "--arg",
+                    "target=prod",
+                    "--arg",
+                    f"api_url={http_base_url}/index.html",
+                    "--arg",
+                    "sql=SELECT 1",
+                ],
+            )
+            _require(operation.get("state") == "completed", f"operation observe failed: {operation!r}")
+            receipt = operation.get("receipt")
+            _require(isinstance(receipt, dict), f"missing inline receipt: {operation!r}")
+            operation_id = receipt.get("operation_id")
+            _require(isinstance(operation_id, str) and operation_id, f"missing operation_id: {operation!r}")
 
-                # SSH: exec.
-                ssh_env = _tools_call_envelope(
-                    client,
-                    call_id=14,
-                    name="mcp_ssh_manager",
-                    arguments={
-                        "action": "exec",
-                        "connection": {
-                            "host": "127.0.0.1",
-                            "port": ssh_port,
-                            "username": "root",
-                            "password": "root",
-                            "host_key_policy": "accept",
-                        },
-                        "command": "echo ok",
-                        "apply": True,
-                        "timeout_ms": 8000,
-                        "trace_id": "sf-smoke",
-                        "response_mode": "ai",
-                    },
-                )
-                if ssh_env.get("success") is not True:
-                    raise RuntimeError(f"ssh exec failed: {ssh_env!r}")
+            receipt_get = _cli(
+                binary,
+                cwd=root,
+                env=env,
+                args=["receipt", "get", "--arg", f"operation_id={operation_id}"],
+            )
+            _require(receipt_get.get("state") == "completed", f"receipt get failed: {receipt_get!r}")
+            bundle = receipt_get.get("result", {}).get("receipt", {})
+            _require(bundle.get("capability") == "smoke.target.baseline", f"wrong receipt capability: {bundle!r}")
+            _require(isinstance(bundle.get("job_outcomes"), list), f"receipt missing job_outcomes: {bundle!r}")
+            _require(isinstance(bundle.get("artifacts"), list), f"receipt missing artifacts: {bundle!r}")
+            _require(isinstance(bundle.get("step_trace"), list), f"receipt missing step_trace: {bundle!r}")
+            _require(
+                isinstance(bundle.get("description_snapshot"), dict)
+                and isinstance(bundle.get("description_snapshot", {}).get("hash"), str),
+                f"receipt missing description snapshot: {bundle!r}",
+            )
 
-                # Load: repeat help() to catch obvious leaks/crashes.
-                rss_start = _rss_kb(client.proc.pid)
-                started = time.time()
-                for idx in range(args.load_n):
-                    env_load = _tools_call_envelope(
-                        client,
-                        call_id=1000 + idx,
-                        name="help",
-                        arguments={"trace_id": "sf-smoke-load", "response_mode": "ai"},
-                    )
-                    if env_load.get("success") is not True:
-                        raise RuntimeError(f"help() failed under load: {env_load!r}")
-                elapsed_ms = int((time.time() - started) * 1000)
-                rss_end = _rss_kb(client.proc.pid)
+            started = time.time()
+            for _ in range(args.load_n):
+                payload = _cli(binary, cwd=root, env=env, args=["describe", "status"])
+                _require(payload.get("state") == "ready", f"load loop failed: {payload!r}")
+            load_duration = time.time() - started
 
-                print(
-                    f"OK: smoke[{args.profile}] (api/postgres/ssh/artifacts) + load help x{args.load_n} "
-                    f"elapsed_ms={elapsed_ms} rss_kb_start={rss_start} rss_kb_end={rss_end}"
-                )
-            finally:
-                client.terminate()
+            print(
+                f"OK: smoke[{args.profile}] (target resolve + operation/receipt over api/postgres/ssh) "
+                f"+ describe status x{args.load_n} in {load_duration:.1f}s"
+            )
+            return 0
     finally:
         if http_server is not None:
             http_server.shutdown()
-        if ssh_id:
-            subprocess.call(["docker", "stop", ssh_id], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            http_server.server_close()
         if pg_id:
-            subprocess.call(["docker", "stop", pg_id], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        shutil.rmtree(pg_socket_dir, ignore_errors=True)
-    return 0
+            subprocess.run(["docker", "rm", "-f", pg_id], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if ssh_id:
+            subprocess.run(["docker", "rm", "-f", ssh_id], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.run(["rm", "-rf", pg_socket_dir], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
 if __name__ == "__main__":
@@ -502,6 +476,3 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         print("ERROR: smoke interrupted by user", file=sys.stderr)
         raise SystemExit(130)
-    except Exception as err:
-        print(f"ERROR: {err}", file=sys.stderr)
-        raise SystemExit(1)

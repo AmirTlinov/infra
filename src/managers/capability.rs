@@ -89,11 +89,6 @@ impl CapabilityManager {
                 self.capability_service.delete_capability(&name)
             }
             "resolve" => {
-                let intent = self.validation.ensure_string(
-                    args.get("intent").unwrap_or(&Value::Null),
-                    "Intent type",
-                    true,
-                )?;
                 let context_result = if let Some(service) = &self.context_service {
                     service.get_context(&args).await.ok()
                 } else {
@@ -104,9 +99,30 @@ impl CapabilityManager {
                     .and_then(|v| v.get("context"))
                     .cloned()
                     .unwrap_or(Value::Object(Default::default()));
-                let capability = self
-                    .capability_service
-                    .resolve_by_intent(&intent, Some(&context))?;
+                let capability = if let Some(intent) = args
+                    .get("intent")
+                    .and_then(|value| value.as_str())
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                {
+                    self.capability_service
+                        .resolve_by_intent(intent, Some(&context))?
+                } else {
+                    let family = self.validation.ensure_string(
+                        args.get("family").unwrap_or(&Value::Null),
+                        "family",
+                        true,
+                    )?;
+                    let verb = self.validation.ensure_string(
+                        args.get("verb")
+                            .or_else(|| args.get("operation"))
+                            .unwrap_or(&Value::Null),
+                        "verb",
+                        true,
+                    )?;
+                    self.capability_service
+                        .resolve_for_operation(&family, &verb, Some(&context))?
+                };
                 Ok(serde_json::json!({
                     "success": true,
                     "capability": capability,

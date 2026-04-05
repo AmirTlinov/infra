@@ -25,7 +25,7 @@ impl PolicyManager {
         let action = args.get("action");
         match action.and_then(|v| v.as_str()).unwrap_or("") {
             "resolve" => self.resolve(args),
-            "evaluate" => self.evaluate(args),
+            "evaluate" | "check" => self.evaluate(args),
             _ => Err(unknown_action_error("policy", action, POLICY_ACTIONS)),
         }
     }

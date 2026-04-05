@@ -29,11 +29,11 @@ async fn workspace_summary_returns_suggestions() {
     let tmp_dir = std::env::temp_dir().join(format!("infra-workspace-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&tmp_dir).expect("create temp dir");
 
-    let prev_profiles = std::env::var("MCP_PROFILES_DIR").ok();
-    let prev_runbooks = std::env::var("MCP_DEFAULT_RUNBOOKS_PATH").ok();
-    let prev_caps = std::env::var("MCP_DEFAULT_CAPABILITIES_PATH").ok();
+    let prev_profiles = std::env::var("INFRA_PROFILES_DIR").ok();
+    let prev_runbooks = std::env::var("INFRA_DEFAULT_RUNBOOKS_PATH").ok();
+    let prev_caps = std::env::var("INFRA_DEFAULT_CAPABILITIES_PATH").ok();
 
-    std::env::set_var("MCP_PROFILES_DIR", tmp_dir.to_string_lossy().as_ref());
+    std::env::set_var("INFRA_PROFILES_DIR", tmp_dir.to_string_lossy().as_ref());
 
     let runbooks_path = tmp_dir.join("runbooks.json");
     write_json(
@@ -42,12 +42,12 @@ async fn workspace_summary_returns_suggestions() {
             "k8s.diff": {
                 "description": "Diff",
                 "tags": ["k8s"],
-                "steps": [{ "tool": "mcp_context", "args": { "action": "context_list" } }]
+                "steps": [{ "tool": "context", "args": { "action": "context_list" } }]
             }
         }),
     );
     std::env::set_var(
-        "MCP_DEFAULT_RUNBOOKS_PATH",
+        "INFRA_DEFAULT_RUNBOOKS_PATH",
         runbooks_path.to_string_lossy().as_ref(),
     );
 
@@ -69,7 +69,7 @@ async fn workspace_summary_returns_suggestions() {
         }),
     );
     std::env::set_var(
-        "MCP_DEFAULT_CAPABILITIES_PATH",
+        "INFRA_DEFAULT_CAPABILITIES_PATH",
         caps_path.to_string_lossy().as_ref(),
     );
 
@@ -160,19 +160,19 @@ async fn workspace_summary_returns_suggestions() {
         .unwrap_or(false));
 
     if let Some(prev) = prev_profiles {
-        std::env::set_var("MCP_PROFILES_DIR", prev);
+        std::env::set_var("INFRA_PROFILES_DIR", prev);
     } else {
-        std::env::remove_var("MCP_PROFILES_DIR");
+        std::env::remove_var("INFRA_PROFILES_DIR");
     }
     if let Some(prev) = prev_runbooks {
-        std::env::set_var("MCP_DEFAULT_RUNBOOKS_PATH", prev);
+        std::env::set_var("INFRA_DEFAULT_RUNBOOKS_PATH", prev);
     } else {
-        std::env::remove_var("MCP_DEFAULT_RUNBOOKS_PATH");
+        std::env::remove_var("INFRA_DEFAULT_RUNBOOKS_PATH");
     }
     if let Some(prev) = prev_caps {
-        std::env::set_var("MCP_DEFAULT_CAPABILITIES_PATH", prev);
+        std::env::set_var("INFRA_DEFAULT_CAPABILITIES_PATH", prev);
     } else {
-        std::env::remove_var("MCP_DEFAULT_CAPABILITIES_PATH");
+        std::env::remove_var("INFRA_DEFAULT_CAPABILITIES_PATH");
     }
     std::fs::remove_dir_all(&tmp_dir).ok();
 }

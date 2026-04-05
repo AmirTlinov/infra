@@ -77,9 +77,9 @@ async fn intent_irreversible_requires_confirm_when_apply_true() {
         }),
     );
 
-    set_env("MCP_PROFILES_DIR", &tmp_dir);
-    set_env("MCP_DEFAULT_RUNBOOKS_PATH", &runbooks_path);
-    set_env("MCP_DEFAULT_CAPABILITIES_PATH", &capabilities_path);
+    set_env("INFRA_PROFILES_DIR", &tmp_dir);
+    set_env("INFRA_DEFAULT_RUNBOOKS_PATH", &runbooks_path);
+    set_env("INFRA_DEFAULT_CAPABILITIES_PATH", &capabilities_path);
 
     let logger = Logger::new("test");
     let validation = Validation::new();

@@ -2,11 +2,15 @@ use crate::errors::ToolError;
 use crate::managers::intent::IntentManager;
 use crate::services::capability::CapabilityService;
 use crate::services::context::ContextService;
+use crate::services::description::DescriptionService;
 use crate::services::job::JobService;
 use crate::services::logger::Logger;
 use crate::services::operation::OperationService;
+use crate::services::runbook::RunbookService;
 use crate::services::validation::Validation;
+use crate::utils::checks::{checks_from_args, evaluate_checks};
 use crate::utils::manifests::manifest_ref;
+use crate::utils::operation_view::derive_live_operation;
 use crate::utils::tool_errors::unknown_action_error;
 use serde_json::Value;
 use std::sync::Arc;
@@ -20,6 +24,7 @@ pub struct OperationManager {
     logger: Logger,
     validation: Validation,
     capability_service: Arc<CapabilityService>,
+    runbook_service: Arc<RunbookService>,
     context_service: Option<Arc<ContextService>>,
     intent_manager: Arc<IntentManager>,
     operation_service: Arc<OperationService>,
@@ -31,6 +36,7 @@ impl OperationManager {
         logger: Logger,
         validation: Validation,
         capability_service: Arc<CapabilityService>,
+        runbook_service: Arc<RunbookService>,
         context_service: Option<Arc<ContextService>>,
         intent_manager: Arc<IntentManager>,
         operation_service: Arc<OperationService>,
@@ -40,6 +46,7 @@ impl OperationManager {
             logger: logger.child("operation"),
             validation,
             capability_service,
+            runbook_service,
             context_service,
             intent_manager,
             operation_service,
@@ -90,7 +97,17 @@ impl OperationManager {
             .map(|s| s.to_string())
             .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
         let context = self.resolve_operation_context(&args).await;
-        let capability = self.resolve_operation_capability(&action, &args, context.as_ref())?;
+        let rollback_source = if action == "rollback" {
+            Some(self.rollback_source(&args)?)
+        } else {
+            None
+        };
+        let capability = self.resolve_operation_capability(
+            &action,
+            &args,
+            context.as_ref(),
+            rollback_source.as_ref(),
+        )?;
         let capability_name = capability
             .get("name")
             .and_then(|v| v.as_str())
@@ -122,19 +139,34 @@ impl OperationManager {
                 ))
                 .await?
         };
+        let verification = if action == "verify" {
+            Some(evaluate_checks(&details, &checks_from_args(&args)?)?)
+        } else {
+            None
+        };
 
         let finished_at = chrono::Utc::now().to_rfc3339();
+        let description_snapshot = DescriptionService::snapshot(
+            self.capability_service.as_ref(),
+            self.runbook_service.as_ref(),
+        )?;
         let missing = details
             .get("missing")
             .and_then(|v| v.as_array())
             .cloned()
             .unwrap_or_default();
-        let success = if action == "plan" {
+        let raw_success = if action == "plan" {
             missing.is_empty()
                 && details
                     .get("success")
                     .and_then(|v| v.as_bool())
                     .unwrap_or(false)
+        } else if action == "verify" {
+            verification
+                .as_ref()
+                .and_then(|value| value.get("passed"))
+                .and_then(|value| value.as_bool())
+                .unwrap_or(false)
         } else {
             details
                 .get("success")
@@ -147,8 +179,10 @@ impl OperationManager {
             } else {
                 "blocked"
             }
-        } else if success {
-            "succeeded"
+        } else if action == "verify" && !raw_success {
+            "verify_failed"
+        } else if raw_success {
+            "completed"
         } else {
             "failed"
         };
@@ -182,7 +216,8 @@ impl OperationManager {
                 .or_else(|| details.get("effects").cloned())
                 .or_else(|| capability.get("effects").cloned())
                 .unwrap_or(Value::Null),
-            "success": success,
+            "result_success": raw_success,
+            "success": raw_success,
             "created_at": started_at,
             "updated_at": finished_at,
             "finished_at": finished_at,
@@ -192,13 +227,29 @@ impl OperationManager {
             "job_ids": Value::Array(collect_job_ids(&details).into_iter().map(Value::String).collect()),
             "missing": Value::Array(missing),
             "summary": summarize_operation_details(&details),
+            "verification": verification.clone().unwrap_or(Value::Null),
+            "evidence_summary": evidence_summary(&details),
+            "evidence_path": details.get("evidence_path").cloned().unwrap_or(Value::Null),
+            "step_trace": collect_step_trace(&details),
+            "description_snapshot": description_snapshot,
+            "rollback_of": rollback_source
+                .as_ref()
+                .and_then(|value| value.get("operation_id"))
+                .cloned()
+                .unwrap_or(Value::Null),
+            "rollback_source_summary": rollback_source
+                .as_ref()
+                .and_then(|value| value.get("summary"))
+                .cloned()
+                .unwrap_or(Value::Null),
         });
-
-        self.operation_service.upsert(&operation_id, &receipt)?;
+        let live_receipt = derive_live_operation(&receipt, self.job_service.as_ref());
+        self.operation_service
+            .upsert(&operation_id, &live_receipt)?;
 
         Ok(serde_json::json!({
-            "success": success,
-            "operation": receipt,
+            "success": live_receipt.get("success").and_then(|v| v.as_bool()).unwrap_or(false),
+            "operation": live_receipt,
             "details": details,
             "effects": capability.get("effects").cloned().unwrap_or(Value::Null),
             "resolved_capability": capability,
@@ -217,7 +268,9 @@ impl OperationManager {
                 "operation_id": operation_id,
             }));
         };
-        Ok(serde_json::json!({"success": true, "operation": operation}))
+        let live = derive_live_operation(&operation, self.job_service.as_ref());
+        self.operation_service.upsert(&operation_id, &live)?;
+        Ok(serde_json::json!({"success": true, "operation": live}))
     }
 
     async fn operation_cancel(&self, args: Value) -> Result<Value, ToolError> {
@@ -284,9 +337,24 @@ impl OperationManager {
             .unwrap_or(20)
             .clamp(1, 100) as usize;
         let status = args.get("status").and_then(|v| v.as_str());
+        let operations = self
+            .operation_service
+            .list(usize::MAX, None)?
+            .into_iter()
+            .map(|operation| derive_live_operation(&operation, self.job_service.as_ref()))
+            .filter(|operation| {
+                status
+                    .map(|status_filter| {
+                        operation.get("status").and_then(|value| value.as_str())
+                            == Some(status_filter)
+                    })
+                    .unwrap_or(true)
+            })
+            .take(limit)
+            .collect::<Vec<_>>();
         Ok(serde_json::json!({
             "success": true,
-            "operations": self.operation_service.list(limit, status)?,
+            "operations": operations,
         }))
     }
 
@@ -304,6 +372,7 @@ impl OperationManager {
         action: &str,
         args: &Value,
         context: Option<&Value>,
+        rollback_source: Option<&Value>,
     ) -> Result<Value, ToolError> {
         if let Some(capability_name) = args
             .get("capability")
@@ -322,6 +391,30 @@ impl OperationManager {
             return self
                 .capability_service
                 .resolve_by_intent(intent_type, context);
+        }
+        if action == "rollback" {
+            let family = args
+                .get("family")
+                .and_then(|value| value.as_str())
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(|value| value.to_string())
+                .or_else(|| {
+                    rollback_source
+                        .and_then(|value| value.get("family"))
+                        .and_then(|value| value.as_str())
+                        .map(|value| value.to_string())
+                })
+                .ok_or_else(|| {
+                    ToolError::new(
+                        crate::errors::ToolErrorKind::Conflict,
+                        "NOT_ROLLBACKABLE",
+                        "rollback requires family or rollback source family",
+                    )
+                })?;
+            return self
+                .capability_service
+                .resolve_for_operation(&family, action, context);
         }
         let family = self.validation.ensure_string(
             args.get("family").unwrap_or(&Value::Null),
@@ -430,6 +523,9 @@ fn is_operation_control_key(key: &str) -> bool {
             | "limit"
             | "status"
             | "reason"
+            | "checks"
+            | "verify"
+            | "from_operation_id"
     )
 }
 
@@ -568,6 +664,82 @@ fn summarize_operation_details(details: &Value) -> Value {
         "missing": details.get("missing").cloned().unwrap_or(Value::Array(Vec::new())),
         "evidence_path": details.get("evidence_path").cloned().unwrap_or(Value::Null),
     })
+}
+
+fn evidence_summary(details: &Value) -> Value {
+    let evidence = details.get("evidence").cloned().unwrap_or(Value::Null);
+    if evidence.is_null() {
+        return Value::Null;
+    }
+    serde_json::json!({
+        "success": evidence.get("success").cloned().unwrap_or(Value::Null),
+        "executed_at": evidence.get("executed_at").cloned().unwrap_or(Value::Null),
+        "step_count": evidence
+            .get("steps")
+            .and_then(|value| value.as_array())
+            .map(|items| items.len())
+            .unwrap_or(0),
+    })
+}
+
+fn collect_step_trace(details: &Value) -> Value {
+    let steps = details
+        .get("results")
+        .and_then(|value| value.as_array())
+        .cloned()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|step| {
+            serde_json::json!({
+                "capability": step.get("capability").cloned().unwrap_or(Value::Null),
+                "runbook": step.get("runbook").cloned().unwrap_or(Value::Null),
+                "success": step
+                    .get("result")
+                    .and_then(|value| value.get("success"))
+                    .cloned()
+                    .unwrap_or(Value::Null),
+                "job_ids": Value::Array(collect_job_ids(&step).into_iter().map(Value::String).collect()),
+            })
+        })
+        .collect::<Vec<_>>();
+    Value::Array(steps)
+}
+
+impl OperationManager {
+    fn rollback_source(&self, args: &Value) -> Result<Value, ToolError> {
+        let source_id = self.validation.ensure_string(
+            args.get("from_operation_id").unwrap_or(&Value::Null),
+            "from_operation_id",
+            true,
+        )?;
+        let source = self.operation_service.get(&source_id)?.ok_or_else(|| {
+            ToolError::not_found(format!("Source operation not found: {}", source_id))
+        })?;
+        let source_status = source
+            .get("status")
+            .and_then(|value| value.as_str())
+            .unwrap_or("");
+        let effect_kind = source
+            .get("effects")
+            .and_then(|value| value.get("kind"))
+            .and_then(|value| value.as_str())
+            .unwrap_or("read");
+        let requires_apply = source
+            .get("effects")
+            .and_then(|value| value.get("requires_apply"))
+            .and_then(|value| value.as_bool())
+            .unwrap_or(false);
+        if !matches!(source_status, "completed" | "succeeded")
+            || (!requires_apply && effect_kind == "read")
+        {
+            return Err(ToolError::new(
+                crate::errors::ToolErrorKind::Conflict,
+                "NOT_ROLLBACKABLE",
+                "rollback source is not a completed write operation",
+            ));
+        }
+        Ok(source)
+    }
 }
 
 #[async_trait::async_trait]

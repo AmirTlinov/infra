@@ -1,23 +1,51 @@
- [LEGEND]
-# Uses repo-wide tokens from LEGEND.md.
+[LEGEND]
+CLI_ROUTER = Thin command router that normalizes action payloads, emits one JSON envelope, and sets exit codes from real state.
+DESCRIPTION_SNAPSHOT = One combined view of capabilities + runbooks with shared hash, versions, sources, and load time.
+CANONICAL_SURFACES = The public CLI groups: `describe`, `target`, `profile`, `capability`, `policy`, `operation`, `receipt`, `job`.
+INTENT_KERNEL = Capability -> runbook -> tool execution path used by `operation`.
+RECEIPT_BUNDLE = One persisted result package containing operation outcome, verification, evidence summary, step trace, job outcomes, artifacts, and description snapshot.
+LIVE_STATUS = Status derived from persisted operation state plus current background-job state, not from a stale stored string.
+BACKGROUND_JOB = Provider-neutral stored job record whose live state is folded back into operation/receipt views.
+TOOLING_LAYER = Canonical tool naming, contracts, and effect rules shared by managers and execution.
 
- [CONTENT]
-This codebase is organized around explicit seams ([BOUNDARY]) and a deterministic execution core.
+[CONTENT]
+Infra is organized around a CLI-first operator path, not around a hidden transport session.
 
-**Execution path**
-- [ENTRYPOINT]: `src/main.rs` runs `infra::mcp::server::run_stdio()` (stdio MCP).
-- [MCP_SERVER]: `src/mcp/server.rs` validates + routes tool calls.
-- [APP_WIRING]: `src/app.rs` constructs services and managers, then builds the [TOOL_EXECUTOR].
+Execution path:
+- [ENTRYPOINT|LEGEND.md]: `src/main.rs` runs `infra::cli::run()`.
+- [CLI_ROUTER]: `src/cli.rs` parses `infra <surface> <action>`, merges `--json` / `--json-file` / `--arg`, calls one manager, and emits one JSON envelope.
+- [APP_WIRING|LEGEND.md]: `src/app.rs` constructs services and managers once per CLI invocation.
+- [TOOLING_LAYER]: `src/tooling/` carries canonical tool names, contract catalog lookup, and effect resolution.
 
-**Core components**
-- [TOOL_EXECUTOR] (`src/services/tool_executor.rs`): single place for alias-compat resolution + result wrapping + audit; preset merges are rejected as compatibility-only.
-- [RUNBOOK_ENGINE] (`src/managers/runbook.rs`): executes `runbooks.json` steps via the [TOOL_EXECUTOR].
-- [INTENT_ENGINE] (`src/managers/intent.rs`): compiles intents using `capabilities.json`, then runs runbooks via the [RUNBOOK_ENGINE].
-- [PIPELINE_ENGINE] (`src/managers/pipeline/`): streams between HTTP/SFTP/Postgres with optional artifact capture.
-- `mcp_operation` is the capability-first kernel entrypoint for observe/plan/apply/verify/rollback/status/cancel flows, with typed receipts stored in the shared SQLite-backed operation state.
+Canonical public surfaces ([CANONICAL_SURFACES]):
+- `describe status`
+- `target list|get|resolve`
+- `profile list|get|set|delete`
+- `capability list|get|resolve|families`
+- `policy resolve|check`
+- `operation observe|plan|apply|verify|rollback|status|cancel|list`
+- `receipt list|get`
+- `job status|wait|logs|cancel|list`
 
-**State + config**
-- Profiles/state/projects default to an XDG state dir, or can be isolated via `MCP_PROFILES_DIR`.
-- Mutable **operational** records now live in a single SQLite store (`infra.db`, override via `MCP_STORE_DB_PATH`); legacy JSON files are import-only compatibility sources.
-- `runbooks.json` and `capabilities.json` stay file-backed defaults/manifests. Legacy mutable overlays still exist for compatibility, but the redesign direction is to keep capability semantics/versioned recipes out of the operational store hot path.
-- `tools/list` defaults to a low-entropy core tier; the broader canonical expert plane is opt-in via `INFRA_TOOL_TIER=expert`.
+Description and context lifecycle:
+- [DESCRIPTION_SNAPSHOT] lives in `src/services/description.rs`.
+- Each CLI invocation recomputes one combined snapshot for capabilities + runbooks.
+- `ContextService` no longer keeps a session cache in the hot path, so filesystem-derived context is recomputed instead of silently reused.
+- Operation receipts persist the [DESCRIPTION_SNAPSHOT] they were executed with.
+
+Operation kernel:
+- `src/managers/operation.rs` is the main [INTENT_KERNEL] surface.
+- `observe` and `verify` are no longer the same contract:
+  - `observe` reads state;
+  - `verify` requires explicit checks and returns a strict verdict.
+- `rollback` is tied to `from_operation_id` and refuses synthetic rollback without a real write trace.
+
+State truth:
+- `src/utils/operation_view.rs` computes [LIVE_STATUS] from the persisted receipt plus current [BACKGROUND_JOB] state.
+- An operation cannot remain `completed` while a linked job is still `running` or `waiting_external`.
+- `src/managers/receipt.rs` exposes a [RECEIPT_BUNDLE] instead of a thin pointer to separate evidence.
+
+Target/profile/policy truth:
+- `src/managers/target.rs` resolves expanded target bindings: profiles, paths, addresses, policy, and field provenance.
+- `src/managers/profile.rs` is the canonical profile mutation surface.
+- `src/managers/policy.rs` resolves policy and checks it explicitly instead of implying success from a plain read.

@@ -21,11 +21,11 @@ fn restore_env(key: &str, previous: Option<String>) {
 async fn legacy_state_json_imports_once_into_wal_backed_sqlite_store() {
     let _guard = ENV_LOCK.lock().await;
 
-    let prev_profiles = std::env::var("MCP_PROFILES_DIR").ok();
+    let prev_profiles = std::env::var("INFRA_PROFILES_DIR").ok();
 
     let tmp_dir = std::env::temp_dir().join(format!("infra-test-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&tmp_dir).expect("create temp dir");
-    std::env::set_var("MCP_PROFILES_DIR", &tmp_dir);
+    std::env::set_var("INFRA_PROFILES_DIR", &tmp_dir);
 
     let state_path = tmp_dir.join("state.json");
     std::fs::write(
@@ -70,15 +70,15 @@ async fn legacy_state_json_imports_once_into_wal_backed_sqlite_store() {
     assert_eq!(alpha.get("value"), Some(&json!(1)));
     assert_eq!(beta.get("value"), Some(&serde_json::Value::Null));
 
-    restore_env("MCP_PROFILES_DIR", prev_profiles);
+    restore_env("INFRA_PROFILES_DIR", prev_profiles);
 }
 
 #[tokio::test]
 async fn capability_manifest_ignores_store_tombstones_and_mutation_is_compat_only() {
     let _guard = ENV_LOCK.lock().await;
 
-    let prev_profiles = std::env::var("MCP_PROFILES_DIR").ok();
-    let prev_defaults = std::env::var("MCP_DEFAULT_CAPABILITIES_PATH").ok();
+    let prev_profiles = std::env::var("INFRA_PROFILES_DIR").ok();
+    let prev_defaults = std::env::var("INFRA_DEFAULT_CAPABILITIES_PATH").ok();
 
     let tmp_dir = std::env::temp_dir().join(format!("infra-test-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&tmp_dir).expect("create temp dir");
@@ -101,8 +101,8 @@ async fn capability_manifest_ignores_store_tombstones_and_mutation_is_compat_onl
     )
     .expect("write default capabilities");
 
-    std::env::set_var("MCP_PROFILES_DIR", &tmp_dir);
-    std::env::set_var("MCP_DEFAULT_CAPABILITIES_PATH", &default_caps);
+    std::env::set_var("INFRA_PROFILES_DIR", &tmp_dir);
+    std::env::set_var("INFRA_DEFAULT_CAPABILITIES_PATH", &default_caps);
 
     let security = Arc::new(Security::new().expect("security"));
     let service = CapabilityService::new(security.clone()).expect("capability service");
@@ -144,6 +144,6 @@ async fn capability_manifest_ignores_store_tombstones_and_mutation_is_compat_onl
         Some("compatibility_capability_mutation")
     );
 
-    restore_env("MCP_DEFAULT_CAPABILITIES_PATH", prev_defaults);
-    restore_env("MCP_PROFILES_DIR", prev_profiles);
+    restore_env("INFRA_DEFAULT_CAPABILITIES_PATH", prev_defaults);
+    restore_env("INFRA_PROFILES_DIR", prev_profiles);
 }

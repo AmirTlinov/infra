@@ -1,138 +1,123 @@
 # Infra
 
-Infra is a **stdio MCP server** for AI agents that need to do real operational work — not just talk about it.
+Infra is a CLI-first operator binary for agents and humans who need a short, honest path to prod work.
 
-It gives your MCP client one place to **inspect servers over SSH**, **call APIs**, **query Postgres**, **understand repos**, **run repeatable runbooks**, and **save artifacts/audit trails** of what happened.
+The public path is now:
 
-[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+- `infra describe status`
+- `infra target resolve`
+- `infra profile get|set|delete`
+- `infra capability resolve`
+- `infra policy resolve|check`
+- `infra operation observe|plan|apply|verify|rollback|status`
+- `infra receipt get`
+- `infra job status|wait|logs|cancel`
 
-## What is it?
+Every CLI call returns one JSON envelope with:
 
-If you use Claude, Codex, VS Code, Zed, or another MCP client, Infra is the server you plug in when you want the model to do infrastructure and delivery work in a structured way.
+- `ok`
+- `state`
+- `summary`
+- `description_snapshot`
+- `result`
+- `receipt` when an operation produced one
 
-Instead of giving an agent a pile of scripts or broad shell access, Infra gives it:
+That means the agent no longer has to stitch together transport state, stale context, detached receipts, and separate evidence surfaces by hand.
 
-- one MCP endpoint,
-- a predictable tool surface,
-- reusable runbooks for recurring tasks,
-- project-local state,
-- and evidence for what happened.
+## What changed
 
-In practice, that means the model can do useful work like:
+Infra no longer exposes a separate transport/server layer as the public operator path.
 
-- checking whether a service is healthy,
-- querying a database,
-- inspecting a repo before a change,
-- running a deployment workflow,
-- or collecting evidence during an incident.
+The canonical operator surface is the `infra` binary in `PATH`, and the repo-local `infra` skill is only a thin usage contract on top of that binary.
 
-## Why is it useful?
+This removes the main source of drift:
 
-Infra is useful when you want an AI agent to be genuinely operationally helpful, but still understandable and reviewable by humans.
+- no separate long-lived description session,
+- no stale context cache in the hot path,
+- no silent capability choice under ambiguity,
+- no fake success while background work is still running.
 
-- **It turns vague agent requests into concrete operations** — instead of “figure it out in shell”, the model gets real tools for SSH, HTTP, Postgres, repo workflows, and runbooks.
-- **It makes repeatable work actually repeatable** — once a workflow exists as a runbook, the agent can reuse it instead of improvising every time.
-- **It gives you proof, not just claims** — artifacts and audit trails make it easier to inspect outputs, share evidence, and answer “what exactly happened?”
-- **It is safer than default shell-first setups** — risky local execution and secret export are off unless you explicitly enable them.
-- **It reduces tool sprawl** — one MCP server can cover a big chunk of day-to-day ops and automation work.
-
-## What kinds of jobs is it good at?
-
-Infra shines when you want prompts like these to turn into reliable actions:
-
-- “Check prod health and show me where the failure starts.”
-- “Snapshot this repo and summarize what changed.”
-- “Run the staging deploy workflow.”
-- “Query Postgres and export the result.”
-- “Use the existing runbook instead of inventing a shell script.”
-
-## Install
-
-### 1. Build Infra
-
-Prerequisite: a Rust toolchain.
+## Build
 
 ```bash
 cargo build --release
 ```
 
-Binary path:
+Binary:
 
 ```bash
 target/release/infra
 ```
 
-If your platform is published on [GitHub Releases](https://github.com/AmirTlinov/infra/releases), you can use a prebuilt binary instead.
+## Runtime state and manifests
 
-### 2. Create a project profile directory (recommended)
-
-Infra works best when each project has its own state and manifests.
+Infra still uses a project-local profile directory for manifests and mutable state:
 
 ```bash
 mkdir -p .infra
-export MCP_PROFILES_DIR="$PWD/.infra"
+export INFRA_PROFILES_DIR="$PWD/.infra"
 ```
 
-Infra will use this directory for project-local state such as runbooks, capabilities, and the SQLite store.
+Important:
 
-Infra also carries bundled baseline runbooks and capabilities inside the binary. Files in your project profile directory extend or override those bundled defaults.
+- bundled `runbooks.json` and `capabilities.json` are available even outside a repo;
+- project manifests still override bundled defaults;
+- mutable operational state lives in SQLite (`infra.db`, override with `INFRA_STORE_DB_PATH`).
 
-### 3. Add Infra to your MCP client
+## Quick start
 
-Example config shape:
+Inspect loaded descriptions:
 
-```json
-{
-  "mcpServers": {
-    "infra": {
-      "command": "/absolute/path/to/infra/target/release/infra",
-      "args": [],
-      "env": {
-        "MCP_PROFILES_DIR": "/absolute/path/to/your/project/.infra",
-        "INFRA_TOOL_TIER": "expert"
-      }
-    }
-  }
-}
+```bash
+infra describe status
 ```
 
-> Adjust the JSON shape to match your client. The important parts are the `command` and `MCP_PROFILES_DIR`.
-> Set `INFRA_TOOL_TIER=expert` when you want clients that rely on `tools/list` to see the broader SSH / API / Postgres / runbook / artifact surface instead of the compact core tier.
+Read a bundled capability:
 
-Infra now bundles its default `runbooks.json` and `capabilities.json` into the binary, so the installed release binary still has a working manifest-backed baseline even when the client launches it from a non-repo working directory. If you create a project-local `.infra` directory, any `runbooks.json` / `capabilities.json` you place there still override the bundled defaults.
-
-The bundled `repo.snapshot` baseline is read-only and repo-safe: it uses the repo adapter rather than unsafe local shell, so it still works with `INFRA_UNSAFE_LOCAL` left off.
-
-### 4. Sanity check
-
-Once your client starts Infra, try one of these:
-
-```json
-{ "tool": "help", "args": { "query": "runbook" } }
+```bash
+infra capability get --arg name=repo.snapshot
 ```
 
-```json
-{ "tool": "runbook", "args": { "action": "run", "name": "repo.snapshot", "input": { "repo_path": "." } } }
+Resolve an expanded target binding:
+
+```bash
+infra target resolve --arg project=demo --arg name=prod
 ```
 
-The first call shows you what Infra can do. The second runs a simple read-only snapshot of the current repo.
+Run a strict operation loop:
+
+```bash
+infra operation plan --arg family=deploy --arg project=demo --arg target=prod
+infra operation apply --arg family=deploy --arg project=demo --arg target=prod --arg apply=true
+infra operation verify --arg family=deploy --arg project=demo --arg target=prod --arg 'checks=[{"path":"results.0.result.success","equals":true}]'
+```
+
+Inspect the unified receipt bundle:
+
+```bash
+infra receipt get --arg operation_id=<operation-id>
+```
+
+Follow long work honestly:
+
+```bash
+infra job status --arg job_id=<job-id>
+infra job wait --arg job_id=<job-id>
+```
 
 ## Safe defaults
-
-Infra is intentionally locked down by default.
 
 | Capability | Env var | Default |
 |---|---|---|
 | Local shell/filesystem access | `INFRA_UNSAFE_LOCAL=1` | off |
 | Secret export | `INFRA_ALLOW_SECRET_EXPORT=1` | off |
 
-That means you can start with a conservative setup and only opt into risky capabilities when you actually need them.
+## Validation
 
-## Want to go further?
-
-- `docs/RECIPES.md` — copy/paste examples for common workflows
-- `docs/INTEGRATION.md` — local smoke test
-- `docs/contracts/README.md` — lower-level contracts and formats
+```bash
+./tools/doctor
+./tools/gate
+```
 
 ## License
 

@@ -58,7 +58,7 @@ impl ProjectManager {
     pub async fn handle_action(&self, args: Value) -> Result<Value, ToolError> {
         let action = args.get("action");
         match action.and_then(|v| v.as_str()).unwrap_or("") {
-            "project_upsert" => {
+            "project_upsert" | "set" => {
                 let name = self.validation.ensure_string(
                     args.get("name").unwrap_or(&Value::Null),
                     "Project name",
@@ -67,7 +67,7 @@ impl ProjectManager {
                 let payload = self.build_project_payload(&args);
                 self.project_service.set_project(&name, &payload)
             }
-            "project_get" => {
+            "project_get" | "get" => {
                 let name = self.validation.ensure_string(
                     args.get("name").unwrap_or(&Value::Null),
                     "Project name",
@@ -75,11 +75,11 @@ impl ProjectManager {
                 )?;
                 self.project_service.get_project(&name)
             }
-            "project_list" => {
+            "project_list" | "list" => {
                 let filters = ListFilters::from_args(&args);
                 self.project_service.list_projects(&filters)
             }
-            "project_delete" => {
+            "project_delete" | "delete" => {
                 let name = self.validation.ensure_string(
                     args.get("name").unwrap_or(&Value::Null),
                     "Project name",
@@ -87,7 +87,7 @@ impl ProjectManager {
                 )?;
                 self.project_service.delete_project(&name)
             }
-            "project_use" => {
+            "project_use" | "use" => {
                 let name = self.validation.ensure_string(
                     args.get("name").unwrap_or(&Value::Null),
                     "Project name",
@@ -105,14 +105,14 @@ impl ProjectManager {
                 )?;
                 Ok(serde_json::json!({"success": true, "project": name, "scope": scope}))
             }
-            "project_active" => {
+            "project_active" | "active" => {
                 let scope = args.get("scope").and_then(|v| v.as_str()).unwrap_or("any");
                 let state = self.state_service.get(ACTIVE_PROJECT_KEY, Some(scope))?;
                 Ok(
                     serde_json::json!({"success": true, "project": state.get("value").cloned().unwrap_or(Value::Null), "scope": state.get("scope").cloned().unwrap_or(Value::Null)}),
                 )
             }
-            "project_unuse" => {
+            "project_unuse" | "unuse" => {
                 let scope = args.get("scope").and_then(|v| v.as_str()).unwrap_or("any");
                 let cleared = self.state_service.unset(ACTIVE_PROJECT_KEY, Some(scope))?;
                 Ok(serde_json::json!({"success": true, "cleared": cleared}))

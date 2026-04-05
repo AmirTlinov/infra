@@ -42,10 +42,6 @@
     },
     {
       "kind": "contract",
-      "path": "docs/contracts/tool_bus_v1.md"
-    },
-    {
-      "kind": "contract",
       "path": "docs/contracts/ui_recipe_v1.md"
     },
     {
@@ -73,24 +69,28 @@
       "path": "LEGEND.md"
     }
   ],
-  "generated_at_utc": "2026-01-26T04:27:06+00:00",
+  "generated_at_utc": "2026-04-05T18:50:25+00:00",
   "refs": {
     "ARCHITECTURE.md": [
       "APP_WIRING",
-      "BOUNDARY",
+      "BACKGROUND_JOB",
+      "CANONICAL_SURFACES",
+      "CLI_ROUTER",
+      "DESCRIPTION_SNAPSHOT",
       "ENTRYPOINT",
-      "INTENT_ENGINE",
-      "MCP_SERVER",
-      "PIPELINE_ENGINE",
-      "RUNBOOK_ENGINE",
-      "TOOL_EXECUTOR"
+      "INTENT_KERNEL",
+      "LIVE_STATUS",
+      "RECEIPT_BUNDLE",
+      "TOOLING_LAYER"
     ],
     "GOALS.md": [
       "GOAL",
       "NON_GOAL"
     ],
     "MAP.md": [
-      "ENTRYPOINTS"
+      "CLI_DOC",
+      "ENTRYPOINTS",
+      "SKILL_DOC"
     ],
     "PHILOSOPHY.md": [
       "PRINCIPLE",
@@ -114,12 +114,6 @@
     "docs/contracts/team_cognition_v1.md": [
       "TEAM_COGNITION"
     ],
-    "docs/contracts/tool_bus_v1.md": [
-      "ENVELOPE",
-      "MCP_JSONRPC",
-      "NOTIFICATION",
-      "TOOL_BUS"
-    ],
     "docs/contracts/ui_recipe_v1.md": [
       "UI_RECIPE"
     ],
@@ -132,10 +126,9 @@
     ],
     "docs/contracts/README.md": [],
     "docs/AGENT_PLAYBOOK.md": [
-      "ADD_TOOL",
-      "CHANGE_PROTOCOL",
-      "GATE",
-      "GOLDEN_PATH"
+      "CANONICAL_LOOP",
+      "GOLDEN_PATH",
+      "RAW_DETOUR"
     ],
     "docs/DOC_STYLE.md": [
       "CONTEXT_DOC",
@@ -144,13 +137,6 @@
     "LEGEND.md": []
   },
   "reverse_index": {
-    "ADD_TOOL": {
-      "defined_in": "docs/AGENT_PLAYBOOK.md",
-      "meaning": "The safe workflow for adding a new tool handler.",
-      "used_in": [
-        "docs/AGENT_PLAYBOOK.md"
-      ]
-    },
     "APP_WIRING": {
       "defined_in": "LEGEND.md",
       "meaning": "The dependency graph assembly (construct services/managers, connect them).",
@@ -158,9 +144,28 @@
         "ARCHITECTURE.md"
       ]
     },
+    "BACKGROUND_JOB": {
+      "defined_in": "ARCHITECTURE.md",
+      "meaning": "Provider-neutral stored job record whose live state is folded back into operation/receipt views.",
+      "used_in": [
+        "ARCHITECTURE.md"
+      ]
+    },
     "BOUNDARY": {
       "defined_in": "LEGEND.md",
       "meaning": "A seam where we define contracts to prevent implicit coupling.",
+      "used_in": []
+    },
+    "CANONICAL_LOOP": {
+      "defined_in": "docs/AGENT_PLAYBOOK.md",
+      "meaning": "Preferred prod loop through `infra` CLI surfaces before any raw expert detour.",
+      "used_in": [
+        "docs/AGENT_PLAYBOOK.md"
+      ]
+    },
+    "CANONICAL_SURFACES": {
+      "defined_in": "ARCHITECTURE.md",
+      "meaning": "The public CLI groups: `describe`, `target`, `profile`, `capability`, `policy`, `operation`, `receipt`, `job`.",
       "used_in": [
         "ARCHITECTURE.md"
       ]
@@ -168,8 +173,20 @@
     "CHANGE_PROTOCOL": {
       "defined_in": "LEGEND.md",
       "meaning": "The sequence: contracts \u2192 implementation \u2192 tests \u2192 docs.",
+      "used_in": []
+    },
+    "CLI_DOC": {
+      "defined_in": "MAP.md",
+      "meaning": "The public CLI-first truth surface.",
       "used_in": [
-        "docs/AGENT_PLAYBOOK.md"
+        "MAP.md"
+      ]
+    },
+    "CLI_ROUTER": {
+      "defined_in": "ARCHITECTURE.md",
+      "meaning": "Thin command router that normalizes action payloads, emits one JSON envelope, and sets exit codes from real state.",
+      "used_in": [
+        "ARCHITECTURE.md"
       ]
     },
     "COGNITION": {
@@ -196,6 +213,13 @@
       "meaning": "A versioned interface spec with examples.",
       "used_in": []
     },
+    "DESCRIPTION_SNAPSHOT": {
+      "defined_in": "ARCHITECTURE.md",
+      "meaning": "One combined view of capabilities + runbooks with shared hash, versions, sources, and load time.",
+      "used_in": [
+        "ARCHITECTURE.md"
+      ]
+    },
     "DOCTOR": {
       "defined_in": "LEGEND.md",
       "meaning": "A diagnostic checker for environment + repo foundation.",
@@ -210,23 +234,16 @@
     },
     "ENTRYPOINT": {
       "defined_in": "LEGEND.md",
-      "meaning": "The process entry that starts the stdio MCP server.",
+      "meaning": "The process entry that runs one `infra` CLI invocation.",
       "used_in": [
         "ARCHITECTURE.md"
       ]
     },
     "ENTRYPOINTS": {
       "defined_in": "MAP.md",
-      "meaning": "The minimal set of docs that explain \u201chow this repo works\u201d.",
+      "meaning": "Minimal docs and skills needed to understand the repo without wandering through dead transport history.",
       "used_in": [
         "MAP.md"
-      ]
-    },
-    "ENVELOPE": {
-      "defined_in": "docs/contracts/tool_bus_v1.md",
-      "meaning": "The strict JSON object returned inside `tools/call` text output.",
-      "used_in": [
-        "docs/contracts/tool_bus_v1.md"
       ]
     },
     "EVENT_LOG": {
@@ -239,9 +256,7 @@
     "GATE": {
       "defined_in": "LEGEND.md",
       "meaning": "A deterministic checker that fails closed on drift.",
-      "used_in": [
-        "docs/AGENT_PLAYBOOK.md"
-      ]
+      "used_in": []
     },
     "GLOBAL_TOKEN": {
       "defined_in": "LEGEND.md",
@@ -257,7 +272,7 @@
     },
     "GOLDEN_PATH": {
       "defined_in": "docs/AGENT_PLAYBOOK.md",
-      "meaning": "The recommended sequence that keeps work safe and deterministic.",
+      "meaning": "Short sequence that keeps operator work honest and reproducible.",
       "used_in": [
         "docs/AGENT_PLAYBOOK.md"
       ]
@@ -265,6 +280,11 @@
     "INTENT_ENGINE": {
       "defined_in": "LEGEND.md",
       "meaning": "The intent compiler/executor that maps an intent type to a runbook plan.",
+      "used_in": []
+    },
+    "INTENT_KERNEL": {
+      "defined_in": "ARCHITECTURE.md",
+      "meaning": "Capability -> runbook -> tool execution path used by `operation`.",
       "used_in": [
         "ARCHITECTURE.md"
       ]
@@ -273,6 +293,13 @@
       "defined_in": "LEGEND.md",
       "meaning": "The `[LEGEND]` block containing definitions.",
       "used_in": []
+    },
+    "LIVE_STATUS": {
+      "defined_in": "ARCHITECTURE.md",
+      "meaning": "Status derived from persisted operation state plus current background-job state, not from a stale stored string.",
+      "used_in": [
+        "ARCHITECTURE.md"
+      ]
     },
     "LOCAL_TOKEN": {
       "defined_in": "LEGEND.md",
@@ -284,32 +311,11 @@
       "meaning": "A tool-facing handler (implements ToolHandler; validates args; orchestrates services).",
       "used_in": []
     },
-    "MCP_JSONRPC": {
-      "defined_in": "docs/contracts/tool_bus_v1.md",
-      "meaning": "MCP transport shape over JSON-RPC 2.0 on stdio.",
-      "used_in": [
-        "docs/contracts/tool_bus_v1.md"
-      ]
-    },
-    "MCP_SERVER": {
-      "defined_in": "LEGEND.md",
-      "meaning": "The stdio server that parses requests and routes tool calls.",
-      "used_in": [
-        "ARCHITECTURE.md"
-      ]
-    },
     "NON_GOAL": {
       "defined_in": "GOALS.md",
       "meaning": "An explicit \u201cwe are not doing this\u201d.",
       "used_in": [
         "GOALS.md"
-      ]
-    },
-    "NOTIFICATION": {
-      "defined_in": "docs/contracts/tool_bus_v1.md",
-      "meaning": "A JSON-RPC message without an `id` (no response expected).",
-      "used_in": [
-        "docs/contracts/tool_bus_v1.md"
       ]
     },
     "NO_SHADOWING": {
@@ -329,9 +335,7 @@
     "PIPELINE_ENGINE": {
       "defined_in": "LEGEND.md",
       "meaning": "The streaming data mover between HTTP/SFTP/Postgres with optional artifact capture.",
-      "used_in": [
-        "ARCHITECTURE.md"
-      ]
+      "used_in": []
     },
     "POLICY": {
       "defined_in": "docs/contracts/policy_v1.md",
@@ -347,6 +351,20 @@
         "PHILOSOPHY.md"
       ]
     },
+    "RAW_DETOUR": {
+      "defined_in": "docs/AGENT_PLAYBOOK.md",
+      "meaning": "Direct expert-manager usage outside the canonical loop; allowed only when the CLI surface cannot answer the question.",
+      "used_in": [
+        "docs/AGENT_PLAYBOOK.md"
+      ]
+    },
+    "RECEIPT_BUNDLE": {
+      "defined_in": "ARCHITECTURE.md",
+      "meaning": "One persisted result package containing operation outcome, verification, evidence summary, step trace, job outcomes, artifacts, and description snapshot.",
+      "used_in": [
+        "ARCHITECTURE.md"
+      ]
+    },
     "REQUIRED_SECTIONS": {
       "defined_in": "docs/contracts/CONTRACT_STANDARD.md",
       "meaning": "The required headings every contract must include.",
@@ -357,14 +375,19 @@
     "RUNBOOK_ENGINE": {
       "defined_in": "LEGEND.md",
       "meaning": "The runbook runner that executes a sequence of tool calls with templating and state.",
-      "used_in": [
-        "ARCHITECTURE.md"
-      ]
+      "used_in": []
     },
     "SERVICE": {
       "defined_in": "LEGEND.md",
       "meaning": "A stateful or reusable component (profiles/state/policy/cache/etc).",
       "used_in": []
+    },
+    "SKILL_DOC": {
+      "defined_in": "MAP.md",
+      "meaning": "Repo-local skill that tells the agent how to call `infra` directly.",
+      "used_in": [
+        "MAP.md"
+      ]
     },
     "TEAM_COGNITION": {
       "defined_in": "docs/contracts/team_cognition_v1.md",
@@ -383,18 +406,17 @@
       "meaning": "A reference in content like `[TOKEN]` (optionally `[TOKEN|LEGEND.md]`).",
       "used_in": []
     },
-    "TOOL_BUS": {
-      "defined_in": "docs/contracts/tool_bus_v1.md",
-      "meaning": "The contract for how tools are invoked and reported.",
+    "TOOLING_LAYER": {
+      "defined_in": "ARCHITECTURE.md",
+      "meaning": "Canonical tool naming, contracts, and effect rules shared by managers and execution.",
       "used_in": [
-        "docs/contracts/tool_bus_v1.md"
+        "ARCHITECTURE.md"
       ]
     },
     "TOOL_EXECUTOR": {
       "defined_in": "LEGEND.md",
       "meaning": "The core dispatcher: resolves aliases/presets, executes tools, wraps results, audits.",
       "used_in": [
-        "ARCHITECTURE.md",
         "PHILOSOPHY.md"
       ]
     },

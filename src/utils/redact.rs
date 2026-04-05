@@ -234,9 +234,9 @@ mod tests {
 
     #[test]
     fn redact_object_preserves_non_map_env_field() {
-        let input = serde_json::json!({"env": "mcp_env"});
+        let input = serde_json::json!({"env": "env"});
         let out = redact_object(&input, usize::MAX, None);
-        assert_eq!(out["env"], Value::String("mcp_env".to_string()));
+        assert_eq!(out["env"], Value::String("env".to_string()));
     }
 
     #[test]

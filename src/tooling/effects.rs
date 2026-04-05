@@ -1,4 +1,4 @@
-use crate::mcp::aliases::canonical_tool_name;
+use crate::tooling::names::canonical_tool_name;
 use crate::utils::effects::Effects;
 use serde_json::Value;
 
@@ -447,7 +447,7 @@ fn resolve_tool_action_effects(
     match tool {
         "help" | "legend" => effects("read", false, false, None),
 
-        "mcp_alias" => match action {
+        "alias" => match action {
             "alias_get" | "alias_list" | "alias_resolve" => effects("read", false, false, None),
             "alias_upsert" => effects("write", false, false, None),
             "alias_delete" => effects(
@@ -459,7 +459,7 @@ fn resolve_tool_action_effects(
             _ => effects("mixed", false, false, None),
         },
 
-        "mcp_preset" => match action {
+        "preset" => match action {
             "preset_get" | "preset_list" => effects("read", false, false, None),
             "preset_upsert" => effects("write", false, false, None),
             "preset_delete" => effects(
@@ -471,7 +471,7 @@ fn resolve_tool_action_effects(
             _ => effects("mixed", false, false, None),
         },
 
-        "mcp_state" => match action {
+        "state" => match action {
             "get" | "list" | "dump" => effects("read", false, false, None),
             "set" => match mode {
                 ResolveMode::Hint => effects(
@@ -560,7 +560,7 @@ fn resolve_tool_action_effects(
             _ => effects("mixed", false, false, None),
         },
 
-        "mcp_audit" => match action {
+        "audit" => match action {
             "audit_list" | "audit_tail" | "audit_stats" => effects("read", false, false, None),
             "audit_clear" => effects(
                 "write",
@@ -571,11 +571,11 @@ fn resolve_tool_action_effects(
             _ => effects("mixed", false, false, None),
         },
 
-        "mcp_artifacts" => effects("read", false, false, None),
+        "artifacts" => effects("read", false, false, None),
 
-        "mcp_context" => effects("read", false, false, None),
+        "context" => effects("read", false, false, None),
 
-        "mcp_project" => match action {
+        "project" => match action {
             "project_get" | "project_list" | "project_active" => {
                 effects("read", false, false, None)
             }
@@ -591,7 +591,7 @@ fn resolve_tool_action_effects(
             _ => effects("mixed", false, false, None),
         },
 
-        "mcp_capability" => match action {
+        "capability" => match action {
             "list" | "get" | "resolve" | "suggest" | "graph" | "stats" => {
                 effects("read", false, false, None)
             }
@@ -607,14 +607,12 @@ fn resolve_tool_action_effects(
             _ => effects("mixed", false, false, None),
         },
 
-        "mcp_receipt" | "mcp_profile" | "mcp_target" | "mcp_policy" => {
-            effects("read", false, false, None)
-        }
+        "receipt" | "profile" | "target" | "policy" => effects("read", false, false, None),
 
-        "mcp_evidence" => effects("read", false, false, None),
+        "evidence" => effects("read", false, false, None),
 
         // Orchestrators: they compute/enforce their own effects.
-        "mcp_workspace" => match action {
+        "workspace" => match action {
             "cleanup" => effects(
                 "write",
                 false,
@@ -630,7 +628,7 @@ fn resolve_tool_action_effects(
             _ => effects("read", false, false, None),
         },
 
-        "mcp_runbook" => match action {
+        "runbook" => match action {
             "runbook_list" | "runbook_get" => effects("read", false, false, None),
             "runbook_compile" | "runbook_upsert" | "runbook_upsert_dsl" | "runbook_delete"
             | "runbook_run_dsl" => effects(
@@ -651,7 +649,7 @@ fn resolve_tool_action_effects(
             _ => effects("mixed", false, false, None),
         },
 
-        "mcp_intent" => match action {
+        "intent" => match action {
             "compile" | "dry_run" | "explain" => effects("read", false, false, None),
             "execute" => effects(
                 "mixed",
@@ -662,7 +660,7 @@ fn resolve_tool_action_effects(
             _ => effects("mixed", false, false, None),
         },
 
-        "mcp_env" => match action {
+        "env" => match action {
             "profile_get" | "profile_list" => effects("read", false, false, None),
             "profile_upsert" => effects("write", false, false, None),
             "profile_delete" => effects(
@@ -676,7 +674,7 @@ fn resolve_tool_action_effects(
             _ => effects("mixed", false, false, None),
         },
 
-        "mcp_vault" => match action {
+        "vault" => match action {
             "profile_get" | "profile_list" | "profile_test" => effects("read", false, false, None),
             "profile_upsert" => effects("write", false, false, None),
             "profile_delete" => effects(
@@ -688,7 +686,7 @@ fn resolve_tool_action_effects(
             _ => effects("mixed", false, false, None),
         },
 
-        "mcp_jobs" => match action {
+        "job" => match action {
             "job_cancel" => effects(
                 "write",
                 true,
@@ -704,7 +702,7 @@ fn resolve_tool_action_effects(
             _ => effects("read", false, false, None),
         },
 
-        "mcp_ssh_manager" => match action {
+        "ssh" => match action {
             "profile_get" | "profile_list" | "profile_test" | "connect" | "system_info"
             | "check_host" | "sftp_list" | "sftp_exists" | "sftp_download" | "job_status"
             | "job_wait" | "job_logs_tail" | "tail_job" | "follow_job" => {
@@ -742,7 +740,7 @@ fn resolve_tool_action_effects(
             _ => effects("mixed", false, false, None),
         },
 
-        "mcp_api_client" => match action {
+        "api" => match action {
             "profile_get" | "profile_list" | "check" | "smoke_http" => {
                 effects("read", false, false, None)
             }
@@ -797,7 +795,7 @@ fn resolve_tool_action_effects(
             _ => effects("mixed", false, false, None),
         },
 
-        "mcp_psql_manager" => match action {
+        "sql" => match action {
             "profile_get" | "profile_list" | "profile_test" => effects("read", false, false, None),
             "profile_upsert" => effects("write", false, false, None),
             "profile_delete" => effects(
@@ -900,7 +898,7 @@ fn resolve_tool_action_effects(
             _ => effects("mixed", false, false, None),
         },
 
-        "mcp_repo" => match action {
+        "repo" => match action {
             "repo_info" | "assert_clean" | "git_diff" | "render" => {
                 effects("read", false, false, None)
             }
@@ -952,7 +950,7 @@ fn resolve_tool_action_effects(
             _ => effects("mixed", false, false, None),
         },
 
-        "mcp_local" => match action {
+        "local" => match action {
             "fs_read" | "fs_list" | "fs_stat" => effects("read", false, false, None),
             "fs_write" | "fs_mkdir" => effects("write", true, false, None),
             "fs_rm" => effects(
@@ -965,13 +963,13 @@ fn resolve_tool_action_effects(
             _ => effects("mixed", true, false, None),
         },
 
-        "mcp_pipeline" => match action {
+        "pipeline" => match action {
             "describe" => effects("read", false, false, None),
             "run" | "deploy_smoke" => effects("mixed", true, false, None),
             _ => effects("mixed", true, false, None),
         },
 
-        "mcp_operation" => match action {
+        "operation" => match action {
             "observe" | "plan" | "verify" | "status" | "list" => {
                 effects("read", false, false, None)
             }
@@ -1007,7 +1005,7 @@ pub fn resolve_tool_call_effects_for_result(
         return parse_effects_object(obj)
             .unwrap_or_else(|| resolve_tool_call_effects(canonical, args));
     }
-    if canonical == "mcp_intent" {
+    if canonical == "intent" {
         if let Some(obj) = result
             .get("plan")
             .and_then(|v| v.get("effects"))
@@ -1017,7 +1015,7 @@ pub fn resolve_tool_call_effects_for_result(
                 .unwrap_or_else(|| resolve_tool_call_effects(canonical, args));
         }
     }
-    if canonical == "mcp_operation" {
+    if canonical == "operation" {
         if let Some(obj) = result
             .get("operation")
             .and_then(|v| v.get("effects"))

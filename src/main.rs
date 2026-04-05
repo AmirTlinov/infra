@@ -1,7 +1,4 @@
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
-    if let Err(err) = infra::mcp::server::run_stdio().await {
-        eprintln!("infra: {}", err);
-        std::process::exit(1);
-    }
+    std::process::exit(infra::cli::run().await);
 }

@@ -1,8 +1,10 @@
 use crate::errors::ToolError;
+use crate::services::job::JobService;
 use crate::services::logger::Logger;
 use crate::services::operation::OperationService;
 use crate::services::tool_executor::ToolHandler;
 use crate::services::validation::Validation;
+use crate::utils::operation_view::derive_live_operation;
 use crate::utils::tool_errors::unknown_action_error;
 use serde_json::Value;
 use std::sync::Arc;
@@ -14,6 +16,7 @@ pub struct ReceiptManager {
     logger: Logger,
     validation: Validation,
     operation_service: Arc<OperationService>,
+    job_service: Arc<JobService>,
 }
 
 impl ReceiptManager {
@@ -21,11 +24,13 @@ impl ReceiptManager {
         logger: Logger,
         validation: Validation,
         operation_service: Arc<OperationService>,
+        job_service: Arc<JobService>,
     ) -> Self {
         Self {
             logger: logger.child("receipt"),
             validation,
             operation_service,
+            job_service,
         }
     }
 
@@ -49,7 +54,18 @@ impl ReceiptManager {
         receipts.truncate(limit);
         let receipts = receipts
             .into_iter()
-            .map(|receipt| canonical_receipt_view(&receipt))
+            .map(|receipt| {
+                let operation_id = receipt
+                    .get("operation_id")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let live = derive_live_operation(&receipt, self.job_service.as_ref());
+                if !operation_id.is_empty() {
+                    let _ = self.operation_service.upsert(&operation_id, &live);
+                }
+                canonical_receipt_view(&live)
+            })
             .collect::<Vec<_>>();
 
         Ok(serde_json::json!({
@@ -76,9 +92,12 @@ impl ReceiptManager {
             );
         };
 
+        let live = derive_live_operation(&receipt, self.job_service.as_ref());
+        let _ = self.operation_service.upsert(&operation_id, &live);
+
         Ok(serde_json::json!({
             "success": true,
-            "receipt": canonical_receipt_view(&receipt),
+            "receipt": canonical_receipt_view(&live),
         }))
     }
 }
@@ -122,6 +141,8 @@ fn parse_limit(value: Option<&Value>) -> Result<usize, ToolError> {
 fn canonical_receipt_view(receipt: &Value) -> Value {
     let effects = receipt.get("effects").cloned().unwrap_or(Value::Null);
     let effect_kind = effects.get("kind").cloned().unwrap_or(Value::Null);
+    let job_outcomes = array_or_empty(receipt.get("job_outcomes"));
+    let artifacts = flattened_artifacts(&job_outcomes);
 
     serde_json::json!({
         "operation_id": clone_or_null(receipt.get("operation_id")),
@@ -146,9 +167,33 @@ fn canonical_receipt_view(receipt: &Value) -> Value {
         "span_id": clone_or_null(receipt.get("span_id")),
         "parent_span_id": clone_or_null(receipt.get("parent_span_id")),
         "job_ids": array_or_empty(receipt.get("job_ids")),
+        "job_outcomes": job_outcomes,
+        "artifacts": artifacts,
         "missing": array_or_empty(receipt.get("missing")),
         "summary": clone_or_null(receipt.get("summary")),
+        "verification": clone_or_null(receipt.get("verification")),
+        "evidence_summary": clone_or_null(receipt.get("evidence_summary")),
+        "evidence_path": clone_or_null(receipt.get("evidence_path")),
+        "step_trace": array_or_empty(receipt.get("step_trace")),
+        "rollback_of": clone_or_null(receipt.get("rollback_of")),
+        "rollback_source_summary": clone_or_null(receipt.get("rollback_source_summary")),
+        "description_snapshot": clone_or_null(receipt.get("description_snapshot")),
     })
+}
+
+fn flattened_artifacts(job_outcomes: &[Value]) -> Vec<Value> {
+    let mut out = Vec::new();
+    for outcome in job_outcomes {
+        let Some(artifacts) = outcome.get("artifacts") else {
+            continue;
+        };
+        match artifacts {
+            Value::Array(items) => out.extend(items.iter().cloned()),
+            Value::Object(_) => out.push(artifacts.clone()),
+            _ => {}
+        }
+    }
+    out
 }
 
 fn effect_flag(effects: Option<&Value>, key: &str) -> bool {
