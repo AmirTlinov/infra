@@ -5,6 +5,12 @@ description: Use the `infra` CLI as the direct prod-oriented operator surface. S
 
 [LEGEND]
 GOAL = Keep the agent on one direct operator path instead of rebuilding transport, cache, or session logic in chat.
+INFRA_ONE_LINER = What `infra` is in one sentence.
+HIGH_SIGNAL_SCENARIOS = The main operator jobs an agent can solve well through `infra`.
+FUNCTION_MAP = What `infra` can control directly and what it can execute through active descriptions.
+ENTITY_GLOSSARY = The minimum vocabulary an agent needs before using the CLI.
+BOUNDARY_RULES = What not to assume about `infra`.
+QUICK_EXAMPLES = Short commands that show the operator shape immediately.
 ENTRY_CHECK = The first command that proves which descriptions are active right now.
 DEFAULT_LOOP = The smallest canonical order through resolve, policy, operation, receipt, and job surfaces.
 REF_COMMANDS = `references/commands.md`
@@ -16,6 +22,63 @@ STOP_RULE = Conditions where the agent must stop guessing, stop bypassing the CL
 
 [CONTENT]
 Goal: [GOAL]
+
+[INFRA_ONE_LINER]:
+`infra` is a CLI-first operator for declared infrastructure work: it resolves targets and profiles, chooses declared capabilities, executes controlled operations, and returns honest receipts and job state instead of ad-hoc shell guesswork.
+
+[HIGH_SIGNAL_SCENARIOS]:
+- understand what descriptions are active right now and whether the agent is looking at the right prod picture;
+- resolve the real binding for a target: profile, paths, kubeconfig, addresses, policy context, provenance;
+- inspect whether a write is allowed before attempting it;
+- resolve and run declared operator flows such as smoke, deploy, rollback, triage, db work, or repo work;
+- verify the result with explicit checks instead of narrating success;
+- follow background work honestly until it is really done and the receipt bundle contains proof.
+
+[FUNCTION_MAP]:
+- Direct CLI control surfaces:
+  - `describe`
+  - `target`
+  - `profile`
+  - `capability`
+  - `policy`
+  - `operation`
+  - `receipt`
+  - `job`
+  - `runbook`
+- Built-in execution families that active capabilities/runbooks may use under the hood:
+  - HTTP/API checks and calls
+  - SSH checks and commands
+  - SQL/Postgres queries
+  - repo/git work
+  - local/workspace/fs/env work
+  - pipeline/vault/state/context/artifact/evidence/audit helpers
+- High-level intents are description-driven, not magic. In this repo today, the loaded runbooks/recipes clearly cover flows like:
+  - smoke checks
+  - deploy / rollback
+  - db migrate
+  - incident triage
+  - repo triage
+
+[ENTITY_GLOSSARY]:
+- `target` = the named environment or destination you want to operate on, after expansion into real bindings.
+- `profile` = the concrete operator config and policy source that shapes how work is executed.
+- `capability` = a declared action the descriptions say is allowed and how it should route.
+- `operation` = one execution attempt with state, outputs, and possibly linked jobs.
+- `receipt` = the canonical result bundle: summary, evidence summary, logs/artifacts, and job outcomes.
+- `job` = long-running background work linked to an operation.
+
+[BOUNDARY_RULES]:
+- `infra` is not a generic replacement for `kubectl`, `terraform`, `aws`, `dig`, or raw bash.
+- Do not assume Kubernetes, secrets, DNS, cloud resources, or rollout actions exist just because the repo has managers or examples for them.
+- First inspect the active descriptions. If the loaded capabilities/runbooks do not expose the scenario, say that directly.
+- Prefer `infra` over ad-hoc provider commands when the scenario is declared. Use manual bypass only when the user explicitly asks for it.
+
+[QUICK_EXAMPLES]:
+```bash
+infra describe status
+infra target resolve --arg project=demo --arg name=prod
+infra operation verify --arg family=deploy --arg project=demo --arg target=prod --arg 'checks=[{"path":"results.0.result.success","equals":true}]'
+```
 
 [ENTRY_CHECK]:
 ```bash
