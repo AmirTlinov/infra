@@ -32,7 +32,7 @@ infra describe status
 
 [VERIFY]:
 - `command -v infra` returns a path on PATH
-- `infra describe status` returns `description_snapshot`
+- `infra describe status` returns `description_snapshot` and `state=ready`
 - the same command works from a different working directory
 
 Do not trust the setup until those checks pass.

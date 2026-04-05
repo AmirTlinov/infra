@@ -1,6 +1,6 @@
 ---
 name: infra
-description: Use the `infra` CLI as the direct prod-oriented operator surface. Start with `infra describe status`, stay on the CLI path, and open only one deeper reference when you need command selection, payload syntax, result semantics, bootstrap repair, or repo-specific validation.
+description: Use the `infra` CLI for production, prod, VPS, server, SSH, deploy, rollback, smoke, incident, runbook, and infrastructure work when the task should go through declared targets, profiles, policy, capabilities, operations, receipts, and jobs instead of ad-hoc shell commands. Start with `infra describe status`, stay on the CLI path, and open only one deeper reference when needed.
 ---
 
 [LEGEND]
@@ -12,11 +12,14 @@ ENTITY_GLOSSARY = The minimum vocabulary an agent needs before using the CLI.
 BOUNDARY_RULES = What not to assume about `infra`.
 QUICK_EXAMPLES = Short commands that show the operator shape immediately.
 ENTRY_CHECK = The first command that proves which descriptions are active right now.
+STARTUP_BRANCH = What to do when `infra` is missing, broken, or not `ready`.
+RUNBOOK_BRANCH = When repeated manual work should become a runbook instead of another ad-hoc session.
 DEFAULT_LOOP = The smallest canonical order through resolve, policy, operation, receipt, and job surfaces.
 REF_COMMANDS = `references/commands.md`
 REF_PAYLOADS = `references/payloads.md`
 REF_SEMANTICS = `references/semantics.md`
 REF_BOOTSTRAP = `references/bootstrap.md`
+REF_RUNBOOKS = `references/runbooks.md`
 REF_VALIDATION = `references/repo-validation.md`
 STOP_RULE = Conditions where the agent must stop guessing, stop bypassing the CLI, or stop claiming completion.
 
@@ -52,12 +55,7 @@ Goal: [GOAL]
   - repo/git work
   - local/workspace/fs/env work
   - pipeline/vault/state/context/artifact/evidence/audit helpers
-- High-level intents are description-driven, not magic. In this repo today, the loaded runbooks/recipes clearly cover flows like:
-  - smoke checks
-  - deploy / rollback
-  - db migrate
-  - incident triage
-  - repo triage
+- Typical declared flows often include things like smoke, deploy, rollback, db work, incident triage, or repo triage, but you must verify them through the active descriptions instead of assuming they exist.
 
 [ENTITY_GLOSSARY]:
 - `target` = the named environment or destination you want to operate on, after expansion into real bindings.
@@ -87,6 +85,15 @@ infra describe status
 
 Run this before trusting any other answer. It exposes the active description hash, sources, and load time.
 
+[STARTUP_BRANCH]:
+- If `infra` is missing from PATH, `infra describe status` fails, or the returned `state` is not `ready`, stop the normal loop and open [REF_BOOTSTRAP].
+- Do not guess capabilities or start provider-specific manual work from a broken startup state.
+- Resume the normal loop only after `infra describe status` succeeds and the state is `ready`.
+
+[RUNBOOK_BRANCH]:
+- If the same prod/server action is repeated across sessions, or the manual flow has three or more stable steps, or success depends on always doing the same read/write/verify sequence, stop repeating it and open [REF_RUNBOOKS].
+- Do not create a runbook for one-off exploration, unclear diagnosis, or a still-moving procedure you do not understand yet.
+
 [DEFAULT_LOOP]:
 ```bash
 infra target resolve ...
@@ -109,6 +116,7 @@ Open only one deeper reference:
 - Need to pass arrays, nested JSON, explicit checks, or full context cleanly: [REF_PAYLOADS]
 - Need to reason about `observe` vs `verify`, `waiting_external`, receipts, jobs, or rollback: [REF_SEMANTICS]
 - `infra` is missing from PATH or the binary/skill needs bootstrap repair: [REF_BOOTSTRAP]
+- Need to package repeated work into a reusable runbook/capability pair: [REF_RUNBOOKS]
 - You are changing this repo and need repo-owned proof rails: [REF_VALIDATION]
 
 [STOP_RULE]:

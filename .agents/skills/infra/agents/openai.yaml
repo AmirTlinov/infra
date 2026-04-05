@@ -1,7 +1,7 @@
 interface:
   display_name: "Infra CLI"
-  short_description: "Direct prod-oriented infra operator"
-  default_prompt: "Use $infra to resolve the target, check policy, run the right operation, and return the receipt bundle."
+  short_description: "Prod, VPS, SSH, deploy, rollback, smoke, incident, and runbook ops via infra CLI"
+  default_prompt: "Use $infra for production or server work: resolve the target, inspect policy, run the right operation, and if the same flow keeps repeating, package the smallest stable slice into a runbook."
 
 policy:
-  allow_implicit_invocation: false
+  allow_implicit_invocation: true
