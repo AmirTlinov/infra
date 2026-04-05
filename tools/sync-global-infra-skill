@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+source_dir="$repo_root/.agents/skills/infra"
+codex_home="${CODEX_HOME:-$HOME/.codex}"
+target_dir="$codex_home/skills/infra"
+
+if [[ ! -d "$source_dir" ]]; then
+  echo "missing source skill dir: $source_dir" >&2
+  exit 1
+fi
+
+mkdir -p "$target_dir"
+rsync -a --delete "$source_dir"/ "$target_dir"/
+
+test -f "$target_dir/SKILL.md"
+test -f "$target_dir/agents/openai.yaml"
+test -f "$target_dir/references/commands.md"
+test -f "$target_dir/references/payloads.md"
+test -f "$target_dir/references/semantics.md"
+test -f "$target_dir/references/bootstrap.md"
+
+diff -rq "$source_dir" "$target_dir" >/dev/null
+
+if ! command -v infra >/dev/null 2>&1; then
+  echo "global skill synced, but infra is not on PATH" >&2
+  exit 2
+fi
+
+tmp_dir="$(mktemp -d)"
+trap 'rm -rf "$tmp_dir"' EXIT
+(cd "$tmp_dir" && infra describe status >/dev/null)
+
+echo "OK: sync-global-infra-skill ($target_dir)"

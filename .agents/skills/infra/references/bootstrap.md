@@ -25,6 +25,10 @@ infra describe status
 ```bash
 ~/.codex/skills/infra/
 ```
+5. When this repo changes the skill package, resync and self-check with:
+```bash
+./tools/sync-global-infra-skill
+```
 
 [VERIFY]:
 - `command -v infra` returns a path on PATH

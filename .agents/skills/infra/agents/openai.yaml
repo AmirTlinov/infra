@@ -1,0 +1,7 @@
+interface:
+  display_name: "Infra CLI"
+  short_description: "Direct prod-oriented infra operator"
+  default_prompt: "Use $infra to resolve the target, check policy, run the right operation, and return the receipt bundle."
+
+policy:
+  allow_implicit_invocation: false
