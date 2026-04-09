@@ -17,13 +17,29 @@ const UNCONFIGURED_MANIFEST_SOURCE: &str = "unconfigured_manifest";
 pub struct RunbookService {
     default_manifest_path: Option<PathBuf>,
     manifest_path: PathBuf,
+    manifest: RunbookManifest,
+}
+
+#[derive(Clone)]
+struct RunbookManifest {
+    path: Option<PathBuf>,
+    source: String,
+    version: Option<Value>,
+    sha256: Option<String>,
 }
 
 impl RunbookService {
     pub fn new() -> Result<Self, ToolError> {
+        let default_manifest_path = resolve_default_runbooks_path();
+        let manifest_path = resolve_runbooks_path();
+        let manifest = load_runbook_manifest(
+            default_manifest_path.as_deref(),
+            Some(manifest_path.as_path()),
+        )?;
         Ok(Self {
-            default_manifest_path: resolve_default_runbooks_path(),
-            manifest_path: resolve_runbooks_path(),
+            default_manifest_path,
+            manifest_path,
+            manifest,
         })
     }
 
@@ -32,111 +48,34 @@ impl RunbookService {
     }
 
     pub fn manifest_metadata(&self) -> Value {
-        let manifests = self.manifest_runbooks().unwrap_or_default();
-        let project_manifest = manifests.values().find_map(|(runbook, _)| {
-            let source = runbook
-                .get("source")
-                .and_then(|value| value.as_str())
-                .unwrap_or("");
-            if source == "manifest" {
-                Some(runbook.clone())
-            } else {
-                None
-            }
-        });
-        let fallback_manifest = manifests
-            .values()
-            .next()
-            .map(|(runbook, _)| runbook.clone());
-        let manifest = project_manifest
-            .or(fallback_manifest)
-            .unwrap_or(Value::Null);
-
         serde_json::json!({
-            "manifest_path": manifest.get("manifest_path").cloned().unwrap_or(Value::Null),
-            "manifest_source": manifest
-                .get("manifest_source")
-                .cloned()
-                .unwrap_or(Value::String(UNCONFIGURED_MANIFEST_SOURCE.to_string())),
-            "manifest_version": manifest.get("manifest_version").cloned().unwrap_or(Value::Null),
-            "manifest_sha256": manifest.get("manifest_sha256").cloned().unwrap_or(Value::Null),
+            "manifest_path": self.manifest_path_value(),
+            "manifest_source": self.manifest.source.clone(),
+            "manifest_version": self.manifest.version.clone().unwrap_or(Value::Null),
+            "manifest_sha256": self.manifest_sha256_value(),
         })
     }
 
-    fn read_runbooks_map(path: &Path, source: &str) -> Result<HashMap<String, Value>, ToolError> {
-        let raw = std::fs::read_to_string(path)
-            .map_err(|err| ToolError::internal(format!("Failed to load runbooks: {}", err)))?;
-        Self::read_runbooks_map_from_str(&raw, source, path.to_string_lossy().as_ref())
+    fn manifest_path_value(&self) -> Value {
+        self.manifest
+            .path
+            .as_ref()
+            .map(|path| Value::String(path.to_string_lossy().to_string()))
+            .unwrap_or(Value::Null)
     }
 
-    fn read_runbooks_map_from_str(
-        raw: &str,
-        source: &str,
-        manifest_path: &str,
-    ) -> Result<HashMap<String, Value>, ToolError> {
-        let parsed: Value = serde_json::from_str(raw)
-            .map_err(|err| ToolError::internal(format!("Failed to parse runbooks: {}", err)))?;
-        let manifest_version = parsed.get("version").cloned();
-        let manifest_sha256 = format!("{:x}", Sha256::digest(raw.as_bytes()));
-        let entries = parsed.get("runbooks").cloned().unwrap_or_else(|| {
-            parsed
-                .as_object()
-                .cloned()
-                .map(|mut obj| {
-                    obj.remove("version");
-                    Value::Object(obj)
-                })
-                .unwrap_or(Value::Null)
-        });
-        let runbooks = entries
-            .as_object()
-            .cloned()
-            .unwrap_or_default()
-            .into_iter()
-            .collect::<HashMap<_, _>>();
-        for (name, runbook) in &runbooks {
-            Self::validate_runbook(runbook).map_err(|err| {
-                ToolError::invalid_params(format!(
-                    "Runbook manifest '{}' has invalid entry '{}': {}",
-                    manifest_path,
-                    name,
-                    err.message
-                ))
-                .with_hint(
-                    "Fix the manifest entry and retry; normal-mode runbook execution is manifest-backed."
-                        .to_string(),
-                )
-            })?;
-        }
-        Ok(runbooks
-            .into_iter()
-            .map(|(name, runbook)| {
-                (
-                    name.clone(),
-                    inject_manifest_metadata(
-                        runbook,
-                        &name,
-                        source,
-                        manifest_path,
-                        manifest_version.as_ref(),
-                        &manifest_sha256,
-                    ),
-                )
-            })
-            .collect())
+    fn manifest_sha256_value(&self) -> Value {
+        self.manifest
+            .sha256
+            .as_ref()
+            .map(|sha| Value::String(sha.clone()))
+            .unwrap_or(Value::Null)
     }
 
     fn merge_bundled_manifest(
         merged: &mut HashMap<String, (Value, String)>,
     ) -> Result<(), ToolError> {
-        for (name, runbook) in Self::read_runbooks_map_from_str(
-            bundled_runbooks_json(),
-            BUNDLED_MANIFEST_SOURCE,
-            BUNDLED_RUNBOOKS_MANIFEST_URI,
-        )? {
-            merged.insert(name, (runbook, BUNDLED_MANIFEST_SOURCE.to_string()));
-        }
-        Ok(())
+        merge_bundled_manifest(merged).map(|_| ())
     }
 
     fn merge_manifest(
@@ -144,16 +83,7 @@ impl RunbookService {
         path: Option<&Path>,
         source: &str,
     ) -> Result<bool, ToolError> {
-        let Some(path) = path else {
-            return Ok(false);
-        };
-        if !path.exists() {
-            return Ok(false);
-        }
-        for (name, runbook) in Self::read_runbooks_map(path, source)? {
-            merged.insert(name, (runbook, source.to_string()));
-        }
-        Ok(true)
+        Ok(merge_manifest(merged, path, source)?.is_some())
     }
 
     fn manifest_runbooks(&self) -> Result<HashMap<String, (Value, String)>, ToolError> {
@@ -323,6 +253,180 @@ impl RunbookService {
     }
 }
 
+#[derive(Clone)]
+struct ManifestInfo {
+    path: PathBuf,
+    source: String,
+    version: Option<Value>,
+    sha256: String,
+}
+
+fn load_runbook_manifest(
+    default_path: Option<&Path>,
+    manifest_path: Option<&Path>,
+) -> Result<RunbookManifest, ToolError> {
+    let mut merged = HashMap::new();
+    let same_manifest = default_path == manifest_path;
+
+    let primary = if same_manifest {
+        let manifest_meta = merge_manifest(&mut merged, manifest_path, "manifest")?;
+        let bundled_meta = if manifest_meta.is_none() {
+            merge_bundled_manifest(&mut merged)?
+        } else {
+            None
+        };
+        manifest_meta.or(bundled_meta)
+    } else {
+        let default_meta = merge_manifest(&mut merged, default_path, "default_manifest")?;
+        let bundled_meta = if default_meta.is_none() {
+            merge_bundled_manifest(&mut merged)?
+        } else {
+            None
+        };
+        let manifest_meta = merge_manifest(&mut merged, manifest_path, "manifest")?;
+        manifest_meta.or(default_meta).or(bundled_meta)
+    };
+
+    let (path, version, sha256) = if let Some(meta) = primary.as_ref() {
+        (
+            Some(meta.path.clone()),
+            meta.version.clone(),
+            Some(meta.sha256.clone()),
+        )
+    } else {
+        (
+            manifest_path
+                .or(default_path)
+                .map(|value| value.to_path_buf()),
+            None,
+            None,
+        )
+    };
+
+    Ok(RunbookManifest {
+        path,
+        source: primary
+            .as_ref()
+            .map(|meta| meta.source.clone())
+            .unwrap_or_else(|| UNCONFIGURED_MANIFEST_SOURCE.to_string()),
+        version,
+        sha256,
+    })
+}
+
+fn merge_bundled_manifest(
+    merged: &mut HashMap<String, (Value, String)>,
+) -> Result<Option<ManifestInfo>, ToolError> {
+    let (runbooks, info) = read_runbooks_map_from_str(
+        bundled_runbooks_json(),
+        BUNDLED_MANIFEST_SOURCE,
+        BUNDLED_RUNBOOKS_MANIFEST_URI,
+    )?;
+    for (name, runbook) in runbooks {
+        merged.insert(name, (runbook, BUNDLED_MANIFEST_SOURCE.to_string()));
+    }
+    Ok(Some(info))
+}
+
+fn merge_manifest(
+    merged: &mut HashMap<String, (Value, String)>,
+    path: Option<&Path>,
+    source: &str,
+) -> Result<Option<ManifestInfo>, ToolError> {
+    let Some(path) = path else {
+        return Ok(None);
+    };
+    if !path.exists() {
+        return Ok(None);
+    }
+    let (runbooks, info) = read_runbooks_map(path, source)?;
+    for (name, runbook) in runbooks {
+        merged.insert(name, (runbook, source.to_string()));
+    }
+    Ok(Some(info))
+}
+
+fn read_runbooks_map(
+    path: &Path,
+    source: &str,
+) -> Result<(HashMap<String, Value>, ManifestInfo), ToolError> {
+    let raw = std::fs::read_to_string(path)
+        .map_err(|err| ToolError::internal(format!("Failed to load runbooks: {}", err)))?;
+    read_runbooks_map_from_str(&raw, source, path.to_string_lossy().as_ref())
+}
+
+fn read_runbooks_map_from_str(
+    raw: &str,
+    source: &str,
+    manifest_path: &str,
+) -> Result<(HashMap<String, Value>, ManifestInfo), ToolError> {
+    let parsed: Value = serde_json::from_str(raw)
+        .map_err(|err| ToolError::internal(format!("Failed to parse runbooks: {}", err)))?;
+    let manifest_version = parsed.get("version").cloned();
+    let manifest_sha256 = format!("{:x}", Sha256::digest(raw.as_bytes()));
+    let entries = parsed.get("runbooks").cloned().unwrap_or_else(|| {
+        parsed
+            .as_object()
+            .cloned()
+            .map(|mut obj| {
+                obj.remove("version");
+                Value::Object(obj)
+            })
+            .unwrap_or(Value::Null)
+    });
+    let runbooks = entries
+        .as_object()
+        .cloned()
+        .unwrap_or_default()
+        .into_iter()
+        .collect::<HashMap<_, _>>();
+    for (name, runbook) in &runbooks {
+        RunbookService::validate_runbook(runbook).map_err(|err| {
+            ToolError::invalid_params(format!(
+                "Runbook manifest '{}' has invalid entry '{}': {}",
+                manifest_path,
+                name,
+                err.message
+            ))
+            .with_hint(
+                "Fix the manifest entry and retry; normal-mode runbook execution is manifest-backed."
+                    .to_string(),
+            )
+        })?;
+    }
+
+    let runbooks = runbooks
+        .into_iter()
+        .map(|(name, runbook)| {
+            (
+                name.clone(),
+                inject_manifest_metadata(
+                    runbook,
+                    &name,
+                    source,
+                    manifest_path,
+                    manifest_version.as_ref(),
+                    &manifest_sha256,
+                ),
+            )
+        })
+        .collect::<HashMap<_, _>>();
+
+    Ok((
+        runbooks,
+        ManifestInfo {
+            path: PathBuf::from(manifest_path),
+            source: match source {
+                "manifest" | "default_manifest" => FILE_BACKED_MANIFEST_SOURCE.to_string(),
+                BUNDLED_MANIFEST_SOURCE => BUNDLED_MANIFEST_SOURCE.to_string(),
+                other => other.to_string(),
+            },
+            version: manifest_version,
+            sha256: manifest_sha256,
+        },
+    ))
+}
+
 fn inject_manifest_metadata(
     entry: Value,
     name: &str,
@@ -361,4 +465,41 @@ fn inject_manifest_metadata(
         .entry("source".to_string())
         .or_insert_with(|| Value::String(RUNBOOK_SOURCE.to_string()));
     Value::Object(payload)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    #[test]
+    fn load_runbook_manifest_prefers_project_manifest_metadata_over_bundled_fallback() {
+        let tmp_root =
+            std::env::temp_dir().join(format!("infra-runbook-manifest-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&tmp_root).expect("create tmp");
+        let project_manifest = tmp_root.join("runbooks.json");
+        fs::write(
+            &project_manifest,
+            serde_json::to_vec_pretty(&serde_json::json!({
+                "version": 7,
+                "runbooks": {
+                    "demo.observe": {
+                        "steps": [
+                            { "tool": "state", "args": { "action": "get", "key": "demo", "scope": "session" } }
+                        ]
+                    }
+                }
+            }))
+            .expect("serialize project runbooks"),
+        )
+        .expect("write project runbooks");
+
+        let manifest =
+            load_runbook_manifest(None, Some(project_manifest.as_path())).expect("load manifest");
+
+        assert_eq!(manifest.source, FILE_BACKED_MANIFEST_SOURCE);
+        assert_eq!(manifest.path, Some(project_manifest.clone()));
+        assert_eq!(manifest.version, Some(serde_json::json!(7)));
+        assert!(manifest.sha256.is_some());
+    }
 }
