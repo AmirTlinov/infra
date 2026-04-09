@@ -201,6 +201,80 @@ fn cli_sees_manifest_updates_without_manual_refresh() {
 }
 
 #[test]
+fn cli_describe_status_reports_project_runbook_manifest_when_configured() {
+    let _guard = ENV_LOCK.blocking_lock();
+    let tmp_root = std::env::temp_dir().join(format!(
+        "infra-cli-runbook-manifest-{}",
+        uuid::Uuid::new_v4()
+    ));
+    let cwd = tmp_root.join("cwd");
+    let profiles = tmp_root.join("profiles");
+    let project_runbooks_path = tmp_root.join("project-runbooks.json");
+    let missing_default_runbooks_path = tmp_root.join("missing-default-runbooks.json");
+    std::fs::create_dir_all(&cwd).expect("create cwd");
+    std::fs::create_dir_all(&profiles).expect("create profiles");
+
+    write_json(
+        &project_runbooks_path,
+        &serde_json::json!({
+            "version": 7,
+            "runbooks": {
+                "demo.observe": {
+                    "description": "project runbook",
+                    "steps": [{ "tool": "state", "args": { "action": "get", "key": "demo", "scope": "session" } }]
+                }
+            }
+        }),
+    );
+
+    let env = vec![
+        (
+            "INFRA_RUNBOOKS_PATH",
+            project_runbooks_path.to_string_lossy().to_string(),
+        ),
+        (
+            "INFRA_DEFAULT_RUNBOOKS_PATH",
+            missing_default_runbooks_path.to_string_lossy().to_string(),
+        ),
+    ];
+
+    let (status, describe, stderr) = run_cli(&cwd, &profiles, &env, &["describe", "status"]);
+    assert_eq!(status, 0, "stderr: {stderr}");
+    assert_eq!(
+        describe
+            .pointer("/description_snapshot/sources/runbooks/manifest_source")
+            .and_then(|v| v.as_str()),
+        Some("file_backed_manifest")
+    );
+    assert_eq!(
+        describe
+            .pointer("/description_snapshot/sources/runbooks/manifest_path")
+            .and_then(|v| v.as_str()),
+        Some(project_runbooks_path.to_string_lossy().as_ref())
+    );
+    assert_eq!(
+        describe
+            .pointer("/description_snapshot/sources/runbooks/manifest_version")
+            .cloned(),
+        Some(serde_json::json!(7))
+    );
+
+    let (status, runbook, stderr) = run_cli(
+        &cwd,
+        &profiles,
+        &env,
+        &["runbook", "get", "--arg", "name=demo.observe"],
+    );
+    assert_eq!(status, 0, "stderr: {stderr}");
+    assert_eq!(
+        runbook
+            .pointer("/result/runbook/manifest_path")
+            .and_then(|v| v.as_str()),
+        Some(project_runbooks_path.to_string_lossy().as_ref())
+    );
+}
+
+#[test]
 fn cli_verify_requires_explicit_checks() {
     let _guard = ENV_LOCK.blocking_lock();
     let tmp_root = std::env::temp_dir().join(format!("infra-cli-verify-{}", uuid::Uuid::new_v4()));
