@@ -125,6 +125,7 @@ impl OperationManager {
                     &action,
                     &execution_args,
                     &intent_type,
+                    Some(capability_name.as_str()),
                     false,
                 ))
                 .await?
@@ -135,6 +136,7 @@ impl OperationManager {
                     &action,
                     &execution_args,
                     &intent_type,
+                    Some(capability_name.as_str()),
                     action == "apply" || action == "rollback",
                 ))
                 .await?
@@ -430,6 +432,7 @@ impl OperationManager {
         action: &str,
         args: &Value,
         intent_type: &str,
+        capability_name: Option<&str>,
         apply: bool,
     ) -> Value {
         let intent_action = if action == "plan" {
@@ -449,12 +452,18 @@ impl OperationManager {
             inputs.entry(key).or_insert(value);
         }
 
+        let capability_value = capability_name
+            .map(|name| Value::String(name.to_string()))
+            .unwrap_or(Value::Null);
+
         serde_json::json!({
             "action": intent_action,
             "intent": {
                 "type": intent_type,
+                "capability": capability_value.clone(),
                 "inputs": Value::Object(inputs),
             },
+            "capability": capability_value,
             "apply": apply || args.get("apply").and_then(|v| v.as_bool()).unwrap_or(false),
             "confirm": args.get("confirm").and_then(|v| v.as_bool()).unwrap_or(false),
             "save_evidence": args.get("save_evidence").and_then(|v| v.as_bool()).unwrap_or(false),

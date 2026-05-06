@@ -787,3 +787,153 @@ async fn operation_status_stays_waiting_external_until_job_completes() {
     restore_env("INFRA_PROFILES_DIR", prev_profiles);
     std::fs::remove_dir_all(&tmp_dir).ok();
 }
+
+#[tokio::test]
+async fn operation_plan_respects_explicit_capability_when_intent_is_ambiguous() {
+    let _guard = ENV_LOCK.lock().await;
+
+    let prev_profiles = std::env::var("INFRA_PROFILES_DIR").ok();
+    let prev_capabilities = std::env::var("INFRA_CAPABILITIES_PATH").ok();
+    let prev_default_capabilities = std::env::var("INFRA_DEFAULT_CAPABILITIES_PATH").ok();
+    let prev_default_runbooks = std::env::var("INFRA_DEFAULT_RUNBOOKS_PATH").ok();
+    let prev_store_db = std::env::var("INFRA_STORE_DB_PATH").ok();
+
+    let tmp_dir =
+        std::env::temp_dir().join(format!("infra-operation-test-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&tmp_dir).expect("create temp dir");
+
+    let runbooks_path = tmp_dir.join("runbooks.json");
+    write_json(
+        &runbooks_path,
+        &serde_json::json!({
+            "venorus.gitops.sync-root": {
+                "effects": { "kind": "write", "requires_apply": true, "irreversible": false },
+                "steps": [
+                    { "tool": "dummy", "args": { "action": "sync" } }
+                ]
+            }
+        }),
+    );
+
+    let default_capabilities_path = tmp_dir.join("defaults-capabilities.json");
+    write_json(
+        &default_capabilities_path,
+        &serde_json::json!({
+            "version": 1,
+            "capabilities": {
+                "gitops.sync.argocd": {
+                    "intent": "gitops.sync",
+                    "description": "generic argocd sync",
+                    "runbook": "venorus.gitops.sync-root",
+                    "tags": ["argocd"],
+                    "inputs": { "required": [], "defaults": {}, "map": {} },
+                    "when": { "tags_any": ["argocd"] },
+                    "effects": { "kind": "write", "requires_apply": true }
+                }
+            }
+        }),
+    );
+
+    let project_capabilities_path = tmp_dir.join("capabilities.json");
+    write_json(
+        &project_capabilities_path,
+        &serde_json::json!({
+            "version": 1,
+            "capabilities": {
+                "venorus.gitops.sync-root": {
+                    "intent": "gitops.sync",
+                    "description": "venorus exact sync",
+                    "runbook": "venorus.gitops.sync-root",
+                    "tags": ["venorus", "argocd"],
+                    "inputs": { "required": [], "defaults": {}, "map": {} },
+                    "when": {},
+                    "effects": { "kind": "write", "requires_apply": true }
+                }
+            }
+        }),
+    );
+
+    set_env("INFRA_PROFILES_DIR", &tmp_dir);
+    set_env("INFRA_STORE_DB_PATH", &tmp_dir.join("infra.db"));
+    set_env("INFRA_DEFAULT_RUNBOOKS_PATH", &runbooks_path);
+    set_env(
+        "INFRA_DEFAULT_CAPABILITIES_PATH",
+        &default_capabilities_path,
+    );
+    set_env("INFRA_CAPABILITIES_PATH", &project_capabilities_path);
+
+    let logger = Logger::new("test");
+    let validation = Validation::new();
+    let security = Arc::new(Security::new().expect("security"));
+    let state_service = Arc::new(StateService::new().expect("state"));
+    let context_service = Arc::new(ContextService::new().expect("context"));
+    let capability_service =
+        Arc::new(CapabilityService::new(security.clone()).expect("capability service"));
+    let runbook_service = Arc::new(RunbookService::new().expect("runbook service"));
+    let evidence_service = Arc::new(EvidenceService::new(
+        logger.clone(),
+        security.as_ref().clone(),
+    ));
+    let operation_service = Arc::new(OperationService::new().expect("operation service"));
+    let job_service = Arc::new(JobService::new(logger.clone()).expect("job service"));
+
+    let intent_manager = Arc::new(IntentManager::new(
+        logger.clone(),
+        security,
+        validation.clone(),
+        capability_service.clone(),
+        runbook_service.clone(),
+        evidence_service,
+        state_service,
+        None,
+        Some(context_service.clone()),
+        None,
+    ));
+
+    let operation_manager = OperationManager::new(
+        logger,
+        validation,
+        capability_service,
+        runbook_service,
+        Some(context_service),
+        intent_manager,
+        operation_service,
+        job_service,
+    );
+
+    let planned = operation_manager
+        .handle_action(serde_json::json!({
+            "action": "plan",
+            "capability": "venorus.gitops.sync-root",
+            "project": "venorus",
+            "target": "prod",
+        }))
+        .await
+        .expect("explicit capability should bypass ambiguous intent resolution");
+
+    assert_eq!(
+        planned
+            .pointer("/operation/status")
+            .and_then(|v| v.as_str()),
+        Some("planned")
+    );
+    assert_eq!(
+        planned
+            .pointer("/operation/capability")
+            .and_then(|v| v.as_str()),
+        Some("venorus.gitops.sync-root")
+    );
+    assert_eq!(
+        planned
+            .pointer("/resolved_capability/name")
+            .and_then(|v| v.as_str()),
+        Some("venorus.gitops.sync-root")
+    );
+
+    restore_env("INFRA_DEFAULT_RUNBOOKS_PATH", prev_default_runbooks);
+    restore_env("INFRA_DEFAULT_CAPABILITIES_PATH", prev_default_capabilities);
+    restore_env("INFRA_CAPABILITIES_PATH", prev_capabilities);
+    restore_env("INFRA_STORE_DB_PATH", prev_store_db);
+    restore_env("INFRA_PROFILES_DIR", prev_profiles);
+    std::fs::remove_dir_all(&tmp_dir).ok();
+}

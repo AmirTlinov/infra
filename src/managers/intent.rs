@@ -38,6 +38,7 @@ pub struct IntentManager {
 #[derive(Clone)]
 struct NormalizedIntent {
     intent_type: String,
+    capability: Option<String>,
     inputs: serde_json::Map<String, Value>,
     apply: bool,
     project: Option<String>,
@@ -100,12 +101,7 @@ impl IntentManager {
 
     async fn explain(&self, args: &Value) -> Result<Value, ToolError> {
         let intent = self.normalize_intent(args).await?;
-        let capability = self
-            .resolve_capability(
-                &intent.intent_type,
-                intent.context.as_ref().or(intent.inputs.get("context")),
-            )
-            .await?;
+        let capability = self.resolve_root_capability(&intent).await?;
         let (resolved_inputs, missing) = normalize_inputs(&intent.inputs, &capability);
         Ok(serde_json::json!({
             "success": true,
@@ -531,6 +527,7 @@ impl IntentManager {
 
         Ok(NormalizedIntent {
             intent_type,
+            capability: explicit_capability_name(args),
             inputs,
             apply,
             project,
@@ -547,6 +544,37 @@ impl IntentManager {
     ) -> Result<Value, ToolError> {
         self.capability_service
             .resolve_by_intent(intent_type, context)
+    }
+
+    async fn resolve_root_capability(&self, intent: &NormalizedIntent) -> Result<Value, ToolError> {
+        if let Some(name) = intent.capability.as_deref() {
+            let capability = self.capability_service.get_capability(name)?;
+            let capability_intent = capability
+                .get("intent")
+                .and_then(|v| v.as_str())
+                .unwrap_or(name);
+            if capability_intent != intent.intent_type && name != intent.intent_type {
+                return Err(ToolError::invalid_params(format!(
+                    "Explicit capability '{}' does not match intent '{}'",
+                    name, intent.intent_type
+                ))
+                .with_hint(
+                    "Use a capability whose intent matches the requested operation intent."
+                        .to_string(),
+                )
+                .with_details(serde_json::json!({
+                    "capability": name,
+                    "capability_intent": capability_intent,
+                    "intent_type": intent.intent_type,
+                })));
+            }
+            return Ok(capability);
+        }
+        self.resolve_capability(
+            &intent.intent_type,
+            intent.context.as_ref().or(intent.inputs.get("context")),
+        )
+        .await
     }
 
     async fn resolve_dependencies(&self, root_name: &str) -> Result<Vec<Value>, ToolError> {
@@ -607,12 +635,7 @@ impl IntentManager {
         allow_missing: bool,
     ) -> Result<(Value, Vec<String>), ToolError> {
         let intent = self.normalize_intent(args).await?;
-        let root = self
-            .resolve_capability(
-                &intent.intent_type,
-                intent.context.as_ref().or(intent.inputs.get("context")),
-            )
-            .await?;
+        let root = self.resolve_root_capability(&intent).await?;
         let root_name = root
             .get("name")
             .and_then(|v| v.as_str())
@@ -716,6 +739,19 @@ fn get_by_path(source: &Value, path: &str) -> Option<Value> {
         current = obj.get(part)?;
     }
     Some(current.clone())
+}
+
+fn explicit_capability_name(args: &Value) -> Option<String> {
+    args.get("capability")
+        .and_then(|v| v.as_str())
+        .or_else(|| {
+            args.get("intent")
+                .and_then(|v| v.get("capability"))
+                .and_then(|v| v.as_str())
+        })
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.to_string())
 }
 
 fn normalize_inputs(
